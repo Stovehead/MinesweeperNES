@@ -14,7 +14,7 @@ GRID_WIDTH = 14
 GRID_HEIGHT = 9
 
 .zeropage
-    scratch: .res $E
+    scratch: .res $10
     controller_last: .res 1
     controller_new: .res 1
     mouse_state: .res 1
@@ -161,21 +161,14 @@ load_nametable:
     lda #31
     sta PPUDATA
 
-    ldy #0
+    ldy #$00
 :
-    lda Rows1and2, y
+    lda Rows1to7, y
     sta PPUDATA
     iny
-    cpy #96
+    cpy #$E0
     bne :-
-    ldy #0
-:
-    lda Row3, y
-    sta PPUDATA
-    iny
-    cpy #$80
-    bne :-
-    ldy #0
+    ldy #$00
 :
     lda #44
     sta PPUDATA
@@ -291,9 +284,16 @@ load_nametable:
 forever:
     jmp forever
 
-increment_timer: ; Clobbers A and flags
+increment_timer: ; Clobbers A, flags, $00, and $01
     ; Magic constant: 00000100 01000010 01111001
-    clc
+    lda seconds_elapsed + 1 ; Check if the timer is already at 999
+    cmp #$09
+    bne :+
+    lda seconds_elapsed
+    cmp #$99
+    beq end_increment_timer
+    :
+    clc ; Add our constant
     lda #%01111001
     adc time_accumulator
     sta time_accumulator
@@ -303,13 +303,123 @@ increment_timer: ; Clobbers A and flags
     lda #%00000100
     adc time_accumulator + 2
     sta time_accumulator + 2
-    bcc :+
-    lda #$00
+    bcc end_increment_timer ; Once it overflows, we add one to the seconds elapsed
+    lda #%10100100 ; Set PPU increment to 32
+    sta PPUCTRL
+    lda #$00 ; Carry should already be set here
     adc seconds_elapsed
     sta seconds_elapsed
-    adc seconds_elapsed + 1
-    sta seconds_elapsed + 1
+    and #%00001111 ; Check if the first digit overflowed
+    cmp #$A
+    bne update_ones
+    lda seconds_elapsed ; If it did, set it to 0 and add 1 to the second digit
+    and #%11110000
+    clc ; Not sure if this is necessary, but best to be safe
+    adc #$10
+    sta seconds_elapsed
+    cmp #$A0 ; Check if second digit overflowed
+    bne update_tens
+    lda #$00 ; If it did, set first two digits to 0 and and increment the third digit
+    sta seconds_elapsed
+    inc seconds_elapsed + 1 ; No need to worry about overflowing since we stop at 999
+    ldy seconds_elapsed + 1 ; Update hundreds place
+    lda DigitTableLow, y
+    sta $00
+    lda DigitTableHigh, y
+    sta $01
+    lda #$20
+    sta PPUADDR
+    lda #$98
+    sta PPUADDR
+    ldy #$00
+:
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$04
+    bne :-
+    lda #$20
+    sta PPUADDR
+    lda #$99
+    sta PPUADDR
     :
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$08
+    bne :-
+    update_tens:
+    jsr update_tens_sub
+    update_ones:
+    jsr update_ones_sub
+    lda #%10100000 ; Set PPU increment back to 1
+    sta PPUCTRL
+    end_increment_timer:
+    rts
+
+update_tens_sub:
+    lda seconds_elapsed ; Update tens place
+    lsr
+    lsr
+    lsr
+    lsr
+    tay
+    lda DigitTableLow, y
+    sta $00
+    lda DigitTableHigh, y
+    sta $01
+    lda #$20
+    sta PPUADDR
+    lda #$9A
+    sta PPUADDR
+    ldy #$00
+:
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$04
+    bne :-
+    lda #$20
+    sta PPUADDR
+    lda #$9B
+    sta PPUADDR
+    :
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$08
+    bne :-
+    rts
+
+update_ones_sub:
+    lda seconds_elapsed ; Update ones place
+    and #%00001111
+    tay
+    lda DigitTableLow, y
+    sta $00
+    lda DigitTableHigh, y
+    sta $01
+    lda #$20
+    sta PPUADDR
+    lda #$9C
+    sta PPUADDR
+    ldy #$00
+:
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$04
+    bne :-
+    lda #$20
+    sta PPUADDR
+    lda #$9D
+    sta PPUADDR
+    :
+    lda ($00), y
+    sta PPUDATA
+    iny
+    cpy #$08
+    bne :-
     rts
 
 draw_mario: ; Clobbers X
@@ -345,6 +455,11 @@ nmi:
     lda $104, x
     and #%00001000 ; Check decimal flag
     bne after_early_exit
+    bit PPUSTATUS ; Set scroll
+    lda #$00
+    sta PPUSCROLL
+    lda #8
+    sta PPUSCROLL
     pla ; Pop registers from stack
     tay
     pla
@@ -357,19 +472,71 @@ nmi:
 
     jsr draw_mario
 
+    bit PPUSTATUS ; Set scroll
+    lda #$00
+    sta PPUSCROLL
+    lda #8
+    sta PPUSCROLL
     sed
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
     rti
 
-Rows1and2:
+Digit0:
+    .byte $0F, $05, $09, $1A
+    .byte $10, $13, $16, $1B
+
+Digit1:
+    .byte $01, $06, $0A, $0C
+    .byte $11, $13, $16, $1C
+
+Digit2:
+    .byte $12, $07, $17, $1A
+    .byte $10, $14, $0B, $0D
+
+Digit3:
+    .byte $12, $07, $18, $0E
+    .byte $10, $14, $19, $1B
+
+Digit4:
+    .byte $02, $15, $18, $0C
+    .byte $11, $14, $19, $1C
+
+Digit5:
+    .byte $03, $15, $18, $0E
+    .byte $04, $08, $19, $1B
+
+Digit6:
+    .byte $03, $15, $17, $1A
+    .byte $04, $08, $19, $1B
+
+Digit7:
+    .byte $12, $06, $0A, $0C
+    .byte $10, $13, $16, $1C
+
+Digit8:
+    .byte $0F, $15, $17, $1A
+    .byte $10, $14, $19, $1B
+
+Digit9:
+    .byte $0F, $15, $18, $0E
+    .byte $10, $14, $19, $1B
+
+.define DigitTable Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9
+
+DigitTableLow:
+    .lobytes DigitTable
+
+DigitTableHigh:
+    .hibytes DigitTable
+
+Rows1to7:
     .byte $20, $21, $22, $22, $22, $22, $22, $22, $23, $24, $24, $24, $24, $25, $26, $26, $26, $26, $24, $24, $24, $24, $24, $27, $22, $22, $22, $22, $22, $22, $28, $29
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $2D, $2E, $2E, $2F, $30, $2C, $2C, $2C, $2C, $31, $00, $00, $00, $00, $00, $00, $32, $29
-Row3:
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $00, $00, $00, $00, $00, $00, $32, $29
-Rows5and6and7:
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $35, $36, $36, $37, $30, $2C, $2C, $2C, $2C, $31, $00, $00, $00, $00, $00, $00, $32, $29
+    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $2D, $2E, $2E, $2F, $30, $2C, $2C, $2C, $2C, $31, $0F, $10, $0F, $10, $0F, $10, $32, $29
+    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $05, $13, $05, $13, $05, $13, $32, $29
+    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $09, $16, $09, $16, $09, $16, $32, $29
+    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $35, $36, $36, $37, $30, $2C, $2C, $2C, $2C, $31, $1A, $1B, $1A, $1B, $1A, $1B, $32, $29
     .byte $20, $3B, $3C, $3C, $3C, $3C, $3C, $3C, $3D, $3E, $3E, $3E, $3E, $3E, $3F, $3F, $3F, $3F, $40, $3E, $3E, $3E, $3E, $41, $3C, $3C, $3C, $3C, $3C, $3C, $42, $29
     .byte $43, $44, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $46, $47
 
