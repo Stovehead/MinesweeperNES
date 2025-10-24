@@ -9,11 +9,25 @@ APUDMC = $4010
 OAMDMA = $4014
 APUFRAMECOUNTER = $4017
 OAMBUFFER = $0200
+NUM_MINES = 15
+GRID_WIDTH = 14
+GRID_HEIGHT = 9
 
 .zeropage
-    scratch: .res $10
+    scratch: .res $E
     controller_last: .res 1
     controller_new: .res 1
+    mouse_state: .res 1
+    mouse_flags: .res 1
+    mouse_x: .res 1
+    mouse_y: .res 1
+    mouse_down_x: .res 1
+    mouse_down_y: .res 1
+    game_state: .res 1
+    opened_tiles: .res 1
+    num_flags: .res 1
+    seconds_elapsed: .res 2
+    time_accumulator: .res 3
 
 .segment "HEADER"
   ; .byte "NES", $1A      ; iNES header identifier
@@ -85,7 +99,7 @@ load_palettes:
     bne :-
 
 load_nametable:
-    lda PPUSTATUS
+    lda PPUSTATUS ; Avoiding corrupting palette, but is it necessary?
     lda #$3F
     sta PPUADDR
     lda #$00
@@ -261,7 +275,7 @@ load_nametable:
     lda #125
     sta OAMBUFFER + (4 * 10) + 3
 
-    lda #$00
+    lda #$00 ; Is this necessary?
     sta OAMADDR
 
     bit PPUSTATUS ; Set scroll
@@ -276,6 +290,27 @@ load_nametable:
     sed ; Decimal flag used to see if frame finished
 forever:
     jmp forever
+
+increment_timer: ; Clobbers A and flags
+    ; Magic constant: 00000100 01000010 01111001
+    clc
+    lda #%01111001
+    adc time_accumulator
+    sta time_accumulator
+    lda #%01000010
+    adc time_accumulator + 1
+    sta time_accumulator + 1
+    lda #%00000100
+    adc time_accumulator + 2
+    sta time_accumulator + 2
+    bcc :+
+    lda #$00
+    adc seconds_elapsed
+    sta seconds_elapsed
+    adc seconds_elapsed + 1
+    sta seconds_elapsed + 1
+    :
+    rts
 
 draw_mario: ; Clobbers X
     ; Todo: Actual logic to figure out which expression to use
@@ -300,8 +335,9 @@ nmi:
     tya
     pha
 
-    lda #$02
+    lda #$02 ; Push sprites to OAM
     sta OAMDMA
+    jsr increment_timer
     lda #%00011110  ; Enable rendering
     sta PPUMASK
 
@@ -323,7 +359,7 @@ nmi:
 
     sed
     pla ; Pop registers from stack
-    pla
+    pla ; Probably not necessary to restore the registers?
     pla
     rti
 
@@ -353,5 +389,3 @@ Palettes:
 .segment "CHARS"
     .incbin "bg.bin"
     .incbin "sprites.bin"
-
-  ; 000001000100001001111001
