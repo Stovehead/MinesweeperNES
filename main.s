@@ -23,7 +23,10 @@ GRID_HEIGHT = 9
     mouse_y: .res 1
     mouse_down_x: .res 1
     mouse_down_y: .res 1
-    game_state: .res 1
+    game_state: .res 1  ; 0 = game not started
+                        ; 1 = game in progress
+                        ; 2 = game over
+                        ; 3 = game won
     opened_tiles: .res 1
     num_flags: .res 1
     seconds_elapsed: .res 2
@@ -284,7 +287,7 @@ load_nametable:
 forever:
     jmp forever
 
-increment_timer: ; Clobbers A, flags, $00, and $01
+increment_timer: ; Clobbers A, $00, $01, $02, $03
     ; Magic constant: 00000100 01000010 01111001
     lda seconds_elapsed + 1 ; Check if the timer is already at 999
     cmp #$09
@@ -323,85 +326,46 @@ increment_timer: ; Clobbers A, flags, $00, and $01
     sta seconds_elapsed
     inc seconds_elapsed + 1 ; No need to worry about overflowing since we stop at 999
     ldy seconds_elapsed + 1 ; Update hundreds place
-    lda DigitTableLow, y
-    sta $00
-    lda DigitTableHigh, y
-    sta $01
     lda #$20
-    sta PPUADDR
+    sta $02
     lda #$98
-    sta PPUADDR
-    ldy #$00
-:
-    lda ($00), y
-    sta PPUDATA
-    iny
-    cpy #$04
-    bne :-
-    lda #$20
-    sta PPUADDR
-    lda #$99
-    sta PPUADDR
-    :
-    lda ($00), y
-    sta PPUDATA
-    iny
-    cpy #$08
-    bne :-
+    sta $03
+    jsr draw_digit
     update_tens:
-    jsr update_tens_sub
-    update_ones:
-    jsr update_ones_sub
-    lda #%10100000 ; Set PPU increment back to 1
-    sta PPUCTRL
-    end_increment_timer:
-    rts
-
-update_tens_sub:
     lda seconds_elapsed ; Update tens place
     lsr
     lsr
     lsr
     lsr
     tay
-    lda DigitTableLow, y
-    sta $00
-    lda DigitTableHigh, y
-    sta $01
     lda #$20
-    sta PPUADDR
+    sta $02
     lda #$9A
-    sta PPUADDR
-    ldy #$00
-:
-    lda ($00), y
-    sta PPUDATA
-    iny
-    cpy #$04
-    bne :-
-    lda #$20
-    sta PPUADDR
-    lda #$9B
-    sta PPUADDR
-    :
-    lda ($00), y
-    sta PPUDATA
-    iny
-    cpy #$08
-    bne :-
-    rts
-
-update_ones_sub:
+    sta $03
+    jsr draw_digit
+    update_ones:
     lda seconds_elapsed ; Update ones place
     and #%00001111
     tay
+    lda #$20
+    sta $02
+    lda #$9C
+    sta $03
+    jsr draw_digit
+    lda #%10100000 ; Set PPU increment back to 1
+    sta PPUCTRL
+    end_increment_timer:
+    rts
+
+draw_digit: ; Y register is digit to draw, - is 10
+            ; Address of top left tile in $02 and $03
     lda DigitTableLow, y
     sta $00
     lda DigitTableHigh, y
     sta $01
-    lda #$20
+    lda $02
     sta PPUADDR
-    lda #$9C
+    lda $03
     sta PPUADDR
     ldy #$00
 :
@@ -410,11 +374,12 @@ update_ones_sub:
     iny
     cpy #$04
     bne :-
-    lda #$20
+    lda $02
     sta PPUADDR
-    lda #$9D
+    inc $03
+    lda $03
     sta PPUADDR
-    :
+:
     lda ($00), y
     sta PPUDATA
     iny
@@ -447,7 +412,11 @@ nmi:
 
     lda #$02 ; Push sprites to OAM
     sta OAMDMA
+    lda game_state ; Check current game state
+    cmp #$01
+    bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
+:
     lda #%00011110  ; Enable rendering
     sta PPUMASK
 
