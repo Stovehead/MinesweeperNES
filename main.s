@@ -19,6 +19,8 @@ GRID_HEIGHT = 9
     controller_new: .res 1
     mouse_state: .res 1
     mouse_flags: .res 1
+    mouse_display_x: .res 1
+    mouse_display_y: .res 1
     mouse_x: .res 1
     mouse_y: .res 1
     mouse_down_x: .res 1
@@ -309,9 +311,7 @@ increment_timer: ; Clobbers A, $00, $01, $02, $03
     bcc end_increment_timer ; Once it overflows, we add one to the seconds elapsed
     lda #%10100100 ; Set PPU increment to 32
     sta PPUCTRL
-    lda #$00 ; Carry should already be set here
-    adc seconds_elapsed
-    sta seconds_elapsed
+    inc seconds_elapsed
     and #%00001111 ; Check if the first digit overflowed
     cmp #$A
     bne update_ones
@@ -357,7 +357,7 @@ increment_timer: ; Clobbers A, $00, $01, $02, $03
     end_increment_timer:
     rts
 
-draw_digit: ; Y register is digit to draw, - is 10
+draw_digit: ; Y register is digit to draw, - is $0A
             ; Address of top left tile in $02 and $03
     lda DigitTableLow, y
     sta $00
@@ -492,7 +492,11 @@ Digit9:
     .byte $0F, $15, $18, $0E
     .byte $10, $14, $19, $1B
 
-.define DigitTable Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9
+DigitMinus:
+    .byte $01, $07, $18, $0C
+    .byte $80, $08, $0B, $81
+
+.define DigitTable Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, DigitMinus
 
 DigitTableLow:
     .lobytes DigitTable
@@ -502,10 +506,10 @@ DigitTableHigh:
 
 Rows1to7:
     .byte $20, $21, $22, $22, $22, $22, $22, $22, $23, $24, $24, $24, $24, $25, $26, $26, $26, $26, $24, $24, $24, $24, $24, $27, $22, $22, $22, $22, $22, $22, $28, $29
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $2D, $2E, $2E, $2F, $30, $2C, $2C, $2C, $2C, $31, $0F, $10, $0F, $10, $0F, $10, $32, $29
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $05, $13, $05, $13, $05, $13, $32, $29
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $09, $16, $09, $16, $09, $16, $32, $29
-    .byte $20, $2A, $00, $00, $00, $00, $00, $00, $2B, $2C, $2C, $2C, $2C, $20, $35, $36, $36, $37, $30, $2C, $2C, $2C, $2C, $31, $1A, $1B, $1A, $1B, $1A, $1B, $32, $29
+    .byte $20, $2A, $0F, $10, $01, $11, $03, $04, $2B, $2C, $2C, $2C, $2C, $20, $2D, $2E, $2E, $2F, $30, $2C, $2C, $2C, $2C, $31, $0F, $10, $0F, $10, $0F, $10, $32, $29
+    .byte $20, $2A, $05, $13, $06, $13, $15, $08, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $05, $13, $05, $13, $05, $13, $32, $29
+    .byte $20, $2A, $09, $16, $0A, $16, $18, $19, $2B, $2C, $2C, $2C, $2C, $20, $33, $2C, $2C, $34, $30, $2C, $2C, $2C, $2C, $31, $09, $16, $09, $16, $09, $16, $32, $29
+    .byte $20, $2A, $1A, $1B, $0C, $1C, $0E, $1B, $2B, $2C, $2C, $2C, $2C, $20, $35, $36, $36, $37, $30, $2C, $2C, $2C, $2C, $31, $1A, $1B, $1A, $1B, $1A, $1B, $32, $29
     .byte $20, $3B, $3C, $3C, $3C, $3C, $3C, $3C, $3D, $3E, $3E, $3E, $3E, $3E, $3F, $3F, $3F, $3F, $40, $3E, $3E, $3E, $3E, $41, $3C, $3C, $3C, $3C, $3C, $3C, $42, $29
     .byte $43, $44, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $46, $47
 
