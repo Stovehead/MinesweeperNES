@@ -2,25 +2,38 @@ PPUCTRL = $2000
 PPUMASK = $2001
 PPUSTATUS = $2002
 OAMADDR = $2003
+OAMDATA = $2004
 PPUSCROLL = $2005
 PPUADDR = $2006
 PPUDATA = $2007
 APUDMC = $4010
 OAMDMA = $4014
+JOY1 = $4016
+JOY2 = $4017
 APUFRAMECOUNTER = $4017
 OAMBUFFER = $0200
+BUTTON_A =      %10000000
+BUTTON_B =      %01000000
+BUTTON_SELECT = %00100000
+BUTTON_START =  %00010000
+BUTTON_UP =     %00001000
+BUTTON_DOWN =   %00000100
+BUTTON_LEFT =   %00000010
+BUTTON_RIGHT =  %00000001
 NUM_MINES = 15
 GRID_WIDTH = 14
 GRID_HEIGHT = 9
 
 .zeropage
     scratch: .res $10
-    controller_last: .res 1
-    controller_new: .res 1
-    mouse_state: .res 1
+    controller_input: .res 1
+    mouse_state_prev: .res 1
+    mouse_state_new: .res 1
     mouse_flags: .res 1
     mouse_display_x: .res 1
     mouse_display_y: .res 1
+    mouse_delta_x: .res 1
+    mouse_delta_y: .res 1
     mouse_x: .res 1
     mouse_y: .res 1
     mouse_down_x: .res 1
@@ -289,6 +302,22 @@ load_nametable:
 forever:
     jmp forever
 
+update_cursor_sprite:
+    lda mouse_display_y
+    sta OAMDATA
+    lda #$2B
+    sta OAMDATA
+    lda #%00000011
+    sta OAMDATA 
+    lda mouse_display_x
+    sta OAMDATA 
+   
+    lda #$00
+    tax
+    sta PPUSTATUS   ; put 0 in ppu bus 
+    sta OAMADDR, x  ; indexed write dummy read cycle puts ppu open bus on the cpu bus before the write cycle
+    rts
+
 increment_timer: ; Clobbers A, $00, $01, $02, $03
     ; Magic constant: 00000100 01000010 01111001
     lda seconds_elapsed + 1 ; Check if the timer is already at 999
@@ -312,6 +341,7 @@ increment_timer: ; Clobbers A, $00, $01, $02, $03
     lda #%10100100 ; Set PPU increment to 32
     sta PPUCTRL
     inc seconds_elapsed
+    lda seconds_elapsed
     and #%00001111 ; Check if the first digit overflowed
     cmp #$A
     bne update_ones
@@ -403,6 +433,60 @@ draw_mario: ; Clobbers X
     stx OAMBUFFER + (4 * 7) + 1
     rts
 
+read_controllers:
+    lda #$01
+    sta controller_input
+
+    sta JOY1
+    lda #$00
+    sta JOY1
+
+    read_loop:
+    lda JOY1
+    lsr
+    rol controller_input
+    bcc read_loop
+
+    lda controller_input
+    and #(BUTTON_LEFT | BUTTON_RIGHT)
+    cmp #BUTTON_RIGHT
+    bne :+
+    lda #$02
+    jmp after_left_right
+    :
+    cmp #BUTTON_LEFT
+    bne :+
+    lda #$FE
+    jmp after_left_right
+    :
+    lda #$00
+    after_left_right:
+    sta mouse_delta_x
+    lda controller_input
+    and #(BUTTON_UP | BUTTON_DOWN)
+    cmp #BUTTON_DOWN
+    bne :+
+    lda #$02
+    jmp after_up_down
+    :
+    cmp #BUTTON_UP
+    bne :+
+    lda #$FE
+    jmp after_up_down
+    :
+    lda #$00
+    after_up_down:
+    sta mouse_delta_y
+    clc
+    lda mouse_delta_x
+    adc mouse_display_x
+    sta mouse_display_x
+    clc
+    lda mouse_delta_y
+    adc mouse_display_y
+    sta mouse_display_y
+    rts
+
 nmi:
     pha ; Push registers to stack
     txa
@@ -410,20 +494,17 @@ nmi:
     tya
     pha
 
-    lda #$02 ; Push sprites to OAM
-    sta OAMDMA
-    lda game_state ; Check current game state
-    cmp #$01
-    bne :+ ; Skip incrementing timer unless the game is started
-    jsr increment_timer
-:
-    lda #%00011110  ; Enable rendering
-    sta PPUMASK
-
     tsx
     lda $104, x
     and #%00001000 ; Check decimal flag
     bne after_early_exit
+    jsr read_controllers
+    jsr update_cursor_sprite
+    lda game_state
+    cmp #$01
+    bne :+ ; Skip incrementing timer unless the game is started
+    jsr increment_timer
+:
     bit PPUSTATUS ; Set scroll
     lda #$00
     sta PPUSCROLL
@@ -436,10 +517,23 @@ nmi:
     pla
     rti
     after_early_exit:
-
     cld
 
+    lda #%00011110  ; Enable rendering
+    sta PPUMASK
+
+    lda #$02 ; Push sprites to OAM
+    sta OAMDMA
     jsr draw_mario
+    jsr read_controllers
+    jsr update_cursor_sprite
+    
+    lda game_state ; Check current game state
+    cmp #$01
+    bne :+ ; Skip incrementing timer unless the game is started
+    jsr increment_timer
+:
+    
 
     bit PPUSTATUS ; Set scroll
     lda #$00
