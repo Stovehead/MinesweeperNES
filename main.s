@@ -26,6 +26,7 @@ GRID_HEIGHT = 9
 
 .zeropage
     scratch: .res $10
+    frame_count: .res 1
     controller_input: .res 1
     mouse_state_prev: .res 1
     mouse_state_new: .res 1
@@ -477,13 +478,33 @@ read_controllers:
     lda #$00
     after_up_down:
     sta mouse_delta_y
-    clc
-    lda mouse_delta_x
+
+    clc ; Update mouse X
+    lda mouse_delta_x ; Logic to make sure it doesn't wrap
+    bpl check_positive_x
     adc mouse_display_x
+    bcs end_x
+    lda #$00
+    jmp end_x
+    check_positive_x:
+    adc mouse_display_x
+    bcc end_x
+    lda #$FF
+    end_x:
     sta mouse_display_x
-    clc
+
+    clc ; Update mouse y
     lda mouse_delta_y
+    bpl check_positive_y
     adc mouse_display_y
+    bcs end_y
+    lda #$00
+    jmp end_y
+    check_positive_y:
+    adc mouse_display_y
+    bcc end_y
+    lda #$FF
+    end_y:
     sta mouse_display_y
     rts
 
@@ -494,12 +515,14 @@ nmi:
     tya
     pha
 
+    inc frame_count
+
     tsx
     lda $104, x
     and #%00001000 ; Check decimal flag
     bne after_early_exit
-    jsr read_controllers
     jsr update_cursor_sprite
+    jsr read_controllers
     lda game_state
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
@@ -540,6 +563,7 @@ nmi:
     sta PPUSCROLL
     lda #8
     sta PPUSCROLL
+
     sed
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
