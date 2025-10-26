@@ -47,6 +47,8 @@ GRID_HEIGHT = 9
     num_flags: .res 1
     seconds_elapsed: .res 2
     time_accumulator: .res 3
+    timer_digits_buffer: .res 3
+    mines_digits_buffer: .res 3
 
 .segment "HEADER"
   ; .byte "NES", $1A      ; iNES header identifier
@@ -296,6 +298,14 @@ load_nametable:
     lda #8
     sta PPUSCROLL
 
+    lda #$FF ; Initialize digit buffers
+    sta mines_digits_buffer
+    sta mines_digits_buffer + 1
+    sta mines_digits_buffer + 2
+    sta timer_digits_buffer
+    sta timer_digits_buffer + 1
+    sta timer_digits_buffer + 2
+
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
 
@@ -339,8 +349,6 @@ increment_timer: ; Clobbers A, $00, $01, $02, $03
     adc time_accumulator + 2
     sta time_accumulator + 2
     bcc end_increment_timer ; Once it overflows, we add one to the seconds elapsed
-    lda #%10100100 ; Set PPU increment to 32
-    sta PPUCTRL
     inc seconds_elapsed
     lda seconds_elapsed
     and #%00001111 ; Check if the first digit overflowed
@@ -356,36 +364,102 @@ increment_timer: ; Clobbers A, $00, $01, $02, $03
     lda #$00 ; If it did, set first two digits to 0 and and increment the third digit
     sta seconds_elapsed
     inc seconds_elapsed + 1 ; No need to worry about overflowing since we stop at 999
-    ldy seconds_elapsed + 1 ; Update hundreds place
-    lda #$20
-    sta $02
-    lda #$98
-    sta $03
-    jsr draw_digit
+    lda seconds_elapsed + 1 ; Update hundreds place
+    sta timer_digits_buffer + 2
     update_tens:
     lda seconds_elapsed ; Update tens place
     lsr
     lsr
     lsr
     lsr
-    tay
-    lda #$20
-    sta $02
-    lda #$9A
-    sta $03
-    jsr draw_digit
+    sta timer_digits_buffer + 1
     update_ones:
     lda seconds_elapsed ; Update ones place
     and #%00001111
+    sta timer_digits_buffer
+    end_increment_timer:
+    rts
+
+update_timer_display:
+    lda #%10100100
+    sta PPUCTRL ; Set PPU increment to 32
+    lda timer_digits_buffer ; Update ones
+    cmp #$FF
+    beq end_timer_display_update
     tay
     lda #$20
     sta $02
     lda #$9C
     sta $03
     jsr draw_digit
+    lda #$FF
+    sta timer_digits_buffer
+    lda timer_digits_buffer + 1 ; Update tens
+    cmp #$FF
+    beq end_timer_display_update
+    tay
+    lda #$20
+    sta $02
+    lda #$9A
+    sta $03
+    jsr draw_digit 
+    lda #$FF
+    sta timer_digits_buffer + 1
+    lda timer_digits_buffer + 2; Update hundreds
+    cmp #$FF
+    beq end_timer_display_update
+    tay
+    lda #$20
+    sta $02
+    lda #$98
+    sta $03
+    jsr draw_digit 
+    lda #$FF
+    sta timer_digits_buffer + 2
+    end_timer_display_update:
     lda #%10100000 ; Set PPU increment back to 1
     sta PPUCTRL
-    end_increment_timer:
+    rts
+
+update_mines_display:
+    lda #%10100100
+    sta PPUCTRL ; Set PPU increment to 32
+    lda mines_digits_buffer ; Update ones
+    cmp #$FF
+    beq end_mines_display_update
+    tay
+    lda #$20
+    sta $02
+    lda #$86
+    sta $03
+    jsr draw_digit
+    lda #$FF
+    sta mines_digits_buffer
+    lda mines_digits_buffer + 1 ; Update tens
+    cmp #$FF
+    beq end_mines_display_update
+    tay
+    lda #$20
+    sta $02
+    lda #$84
+    sta $03
+    jsr draw_digit 
+    lda #$FF
+    sta mines_digits_buffer + 1
+    lda mines_digits_buffer + 2 ; Update hundreds
+    cmp #$FF
+    beq end_mines_display_update
+    tay
+    lda #$20
+    sta $02
+    lda #$82
+    sta $03
+    jsr draw_digit 
+    lda #$FF
+    sta mines_digits_buffer + 2
+    end_mines_display_update:
+    lda #%10100000 ; Set PPU increment back to 1
+    sta PPUCTRL
     rts
 
 draw_digit: ; Y register is digit to draw, - is $0A
@@ -508,6 +582,26 @@ read_controllers:
     sta mouse_display_y
     rts
 
+update_vram:
+    lda #$02 ; Push sprites to OAM
+    sta OAMDMA
+    jsr update_cursor_sprite
+    lda frame_count
+    and #$01 ; Update timer and mines on alternating frames
+    bne :+
+    jsr update_timer_display
+    jmp :++
+    :
+    jsr update_mines_display
+    :
+    jsr draw_mario
+    bit PPUSTATUS ; Set scroll
+    lda #$00
+    sta PPUSCROLL
+    lda #8
+    sta PPUSCROLL
+    rts
+
 nmi:
     pha ; Push registers to stack
     txa
@@ -517,22 +611,16 @@ nmi:
 
     inc frame_count
 
+    lda #%00011110  ; Enable rendering
+    sta PPUMASK
+
     tsx
     lda $104, x
     and #%00001000 ; Check decimal flag
     bne after_early_exit
     jsr update_cursor_sprite
     jsr read_controllers
-    lda game_state
-    cmp #$01
-    bne :+ ; Skip incrementing timer unless the game is started
-    jsr increment_timer
-:
-    bit PPUSTATUS ; Set scroll
-    lda #$00
-    sta PPUSCROLL
-    lda #8
-    sta PPUSCROLL
+    
     pla ; Pop registers from stack
     tay
     pla
@@ -541,33 +629,23 @@ nmi:
     rti
     after_early_exit:
     cld
-
-    lda #%00011110  ; Enable rendering
-    sta PPUMASK
-
-    lda #$02 ; Push sprites to OAM
-    sta OAMDMA
-    jsr draw_mario
-    jsr read_controllers
-    jsr update_cursor_sprite
     
+    jsr update_vram
+    lda mouse_display_x
+    sta mouse_x
+    lda mouse_display_y
+    sta mouse_y
+    jsr read_controllers
     lda game_state ; Check current game state
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
 :
-    
 
-    bit PPUSTATUS ; Set scroll
-    lda #$00
-    sta PPUSCROLL
-    lda #8
-    sta PPUSCROLL
-
-    sed
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
+    sed
     rti
 
 Digit0:
