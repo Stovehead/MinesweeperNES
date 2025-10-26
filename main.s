@@ -331,6 +331,10 @@ load_nametable:
     sta timer_digits_buffer + 1
     sta timer_digits_buffer + 2
 
+    lda #$80 ; Move mouse to center of screen
+    sta mouse_display_x
+    sta mouse_display_y
+
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
 
