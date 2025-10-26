@@ -202,9 +202,27 @@ load_nametable:
     sta PPUDATA
     lda #49
     sta PPUDATA
-    ldx #28
-    lda #$00
+    ldx #14
 :
+    lda #$4B
+    sta PPUDATA
+    lda #$4C
+    sta PPUDATA
+    dex
+    bne :-
+    lda #43
+    sta PPUDATA
+    lda #44
+    sta PPUDATA
+    lda #44
+    sta PPUDATA
+    lda #49
+    sta PPUDATA
+    ldx #14
+:
+    lda #$4D
+    sta PPUDATA
+    lda #$4E
     sta PPUDATA
     dex
     bne :-
@@ -213,8 +231,8 @@ load_nametable:
     lda #44
     sta PPUDATA
     iny
-    cpy #19
-    bne :--
+    cpy #9
+    bne :---
 
     sta PPUDATA
     lda #72
