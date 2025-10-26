@@ -313,11 +313,10 @@ load_nametable:
 forever:
     jmp forever
 
-update_cursor_sprite:
+update_cursor_sprite: ; ID of cursor sprite in Y
     lda mouse_display_y
     sta OAMDATA
-    lda #$2B
-    sta OAMDATA
+    sty OAMDATA
     lda #%00000011
     sta OAMDATA 
     lda mouse_display_x
@@ -618,6 +617,7 @@ nmi:
     lda $104, x
     and #%00001000 ; Check decimal flag
     bne after_early_exit
+    ldy #$2D ; Load hourglass for cursor sprite
     jsr update_cursor_sprite
     jsr read_controllers
     
@@ -630,6 +630,7 @@ nmi:
     after_early_exit:
     cld
     
+    ldy #$2B ; Load regular cursor sprite
     jsr update_vram
     lda mouse_display_x
     sta mouse_x
@@ -641,7 +642,6 @@ nmi:
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
 :
-
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
