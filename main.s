@@ -74,14 +74,17 @@ reset:
     cld         ; disable decimal mode
     ldx #$40
     stx APUFRAMECOUNTER   ; disable APU frame IRQ
-    ldx #$FF    ; Set up stack
-    txs         ;  .
+    ldx #$FF    
+    txs         ; Set up stack
     inx         ; now X = 0
     stx PPUCTRL	; disable NMI
     stx PPUCTRL ; disable rendering
     stx APUDMC  ; disable DMC IRQs
+    ; The vblank flag is in an unknown state after reset,
+    ; so it is cleared here to make sure that @vblankwait1
+    ; does not exit immediately.
+    bit PPUSTATUS
 
-;; first wait for vblank to make sure PPU is ready
 vblankwait1:
     bit PPUSTATUS
     bpl vblankwait1
@@ -99,7 +102,6 @@ clear_memory:
     inx
     bne clear_memory
 
-;; second wait for vblank, PPU is ready after this
 vblankwait2:
     bit $2002
     bpl vblankwait2
@@ -169,8 +171,13 @@ load_nametable:
     lda PPUSTATUS ; Load tiles
     lda #$20
     sta PPUADDR
-    lda #$40
+    lda #$00
     sta PPUADDR
+    ldx #$40
+:
+    sta PPUDATA
+    dex
+    bne :-
     lda #29
     sta PPUDATA
     ldx #30
@@ -584,6 +591,7 @@ read_controllers:
 update_vram:
     lda #$02 ; Push sprites to OAM
     sta OAMDMA
+    ldy #$2B ; Load regular cursor sprite
     jsr update_cursor_sprite
     lda frame_count
     and #$01 ; Update timer and mines on alternating frames
@@ -620,7 +628,11 @@ nmi:
     ldy #$2D ; Load hourglass for cursor sprite
     jsr update_cursor_sprite
     jsr read_controllers
-    
+    lda game_state
+    cmp #$01
+    bne :+ ; Skip incrementing timer unless the game is started
+    jsr increment_timer
+:
     pla ; Pop registers from stack
     tay
     pla
@@ -630,18 +642,26 @@ nmi:
     after_early_exit:
     cld
     
-    ldy #$2B ; Load regular cursor sprite
     jsr update_vram
     lda mouse_display_x
     sta mouse_x
     lda mouse_display_y
     sta mouse_y
     jsr read_controllers
+    lda controller_input
+    and #BUTTON_START
+    beq :+
+    lda #$01
+    sta game_state
+    :
     lda game_state ; Check current game state
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
 :
+    lda controller_input
+    and #BUTTON_A
+    bne :-
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
