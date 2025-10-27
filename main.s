@@ -279,6 +279,14 @@ load_nametable:
     lda #44
     sta PPUDATA
 
+    ldx #$20
+    :
+    sta PPUDATA
+    dex
+    bne :-
+
+    ldx
+
     ldx #$00 ; Init OAM
     lda #$FF
 :
