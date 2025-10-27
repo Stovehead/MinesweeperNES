@@ -49,6 +49,36 @@ GRID_HEIGHT = 9
     time_accumulator: .res 3
     timer_digits_buffer: .res 3
     mines_digits_buffer: .res 3
+    rng_seed: .res 2
+    minefield_update_row: .res 1
+    minefield_update_current_tile: .res 2
+    minefield_update_current_attribute: .res 1
+    screen_update_setting: .res 1   ; 0 = update in 9 frames with no blanking
+                                    ; 1 = update in 2 frames with blanking
+
+.segment "PAGE3ONWARDS" 
+    mine_shuffle_space: .res 128
+    minefield_row_0: .res 14
+    .res 2
+    minefield_row_1: .res 14
+    .res 2
+    minefield_row_2: .res 14
+    .res 2
+    minefield_row_3: .res 14
+    .res 2
+    minefield_row_4: .res 14
+    .res 2
+    minefield_row_5: .res 14
+    .res 2
+    minefield_row_6: .res 14
+    .res 2
+    minefield_row_7: .res 14
+    .res 2
+    minefield_row_8: .res 14
+    .res 2
+    minefield_tiles: .res 504
+    minefield_attributes: .res 72
+
 
 .segment "HEADER"
   ; .byte "NES", $1A      ; iNES header identifier
@@ -335,12 +365,266 @@ load_nametable:
     sta mouse_display_x
     sta mouse_display_y
 
+    lda #$01 ; Init RNG
+    sta rng_seed
+
+    lda #$00 ; Fill shuffle space with 0s
+    tax
+    :
+    sta mine_shuffle_space, x
+    inx
+    cpx #113
+    bne :-
+    lda #$01
+    :
+    sta mine_shuffle_space, x ; Fill the last 15 with 1s (mines)
+    inx
+    cpx #128
+    bne :-
+
+    lda #<minefield_tiles
+    sta minefield_update_current_tile
+    lda #>minefield_tiles
+    sta minefield_update_current_tile + 1
+    lda #<minefield_attributes
+    sta minefield_update_current_attribute
+
+    lda #$01 ; Set update setting to blank (temporary)
+    sta screen_update_setting
+
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
 
     sed ; Decimal flag used to see if frame finished
 forever:
     jmp forever
+
+rand: ; Brad Smith's 16-bit galois linear-feedback shift register PRNG implementation
+    pha
+    txa
+    pha
+    tya
+    pha
+
+    lda rng_seed+1
+	tay
+	lsr
+	lsr
+	lsr
+	sta rng_seed+1
+	lsr
+	eor rng_seed+1
+	lsr
+	eor rng_seed+1
+	eor rng_seed+0
+	sta rng_seed+1
+	tya
+	sta rng_seed+0
+	asl
+	eor rng_seed+0
+	asl
+	eor rng_seed+0
+	asl
+	asl
+	asl
+	eor rng_seed+0
+	sta rng_seed+0
+
+    pla
+    tay
+    pla
+    tax
+    pla
+    rts
+
+shuffle_mines: ; Clobbers $00
+    pha
+    txa
+    pha
+    tya
+    pha
+
+    ldx #127
+    :
+    jsr rand ; Fisher-Yates algorithm
+    lda rng_seed
+    and #%01111111
+    tay
+    lda mine_shuffle_space, x
+    sta scratch
+    lda mine_shuffle_space, y
+    sta mine_shuffle_space, x
+    lda scratch
+    sta mine_shuffle_space, y
+    dex
+    beq :+
+    lda rng_seed + 1
+    and #%01111111
+    tay
+    lda mine_shuffle_space, x
+    sta scratch
+    lda mine_shuffle_space, y
+    sta mine_shuffle_space, x
+    lda scratch
+    sta mine_shuffle_space, y
+    dex
+    jmp :-
+    :
+
+    ldx #126
+    reshuffle_loop:
+    lda mine_shuffle_space, x ; We only have 126 spaces, so we need to reshuffle the last two spaces if they have mines
+    beq reshuffle_loop_end
+    :
+    jsr rand
+    lda rng_seed ; 
+    and #%01111111
+    cmp #126
+    bcs :- ; Retry if we rolled a space higher than 126
+    tay
+    lda mine_shuffle_space, y
+    bne :- ; Retry if we rolled another mine
+    sta scratch ; Swap them
+    lda mine_shuffle_space, x
+    sta mine_shuffle_space, y
+    lda scratch
+    sta mine_shuffle_space, x
+    reshuffle_loop_end:
+    inx
+    bpl reshuffle_loop ; 7th bit should be set when x = 128, so that's when we break out of the loop
+
+    pla
+    tay
+    pla
+    tax
+    pla
+    rts
+
+init_minefield: ; Clobbers X and A
+    ldx #$00
+    :
+    lda mine_shuffle_space, x
+    sta minefield_row_0, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 1, x
+    sta minefield_row_1, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 2, x
+    sta minefield_row_2, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 3, x
+    sta minefield_row_3, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 4, x
+    sta minefield_row_4, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 5, x
+    sta minefield_row_5, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 6, x
+    sta minefield_row_6, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 7, x
+    sta minefield_row_7, x
+    inx
+    cpx #14
+    bne :-
+    ldx #$00
+    :
+    lda mine_shuffle_space + 14 * 8, x
+    sta minefield_row_8, x
+    inx
+    cpx #14
+    bne :-
+
+    ldx #$00 ; Init tiles
+    :
+    lda #$4B
+    .repeat 14, i
+    sta minefield_tiles + 2 * i, x
+    .endrepeat
+    lda #$4C
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 1, x
+    .endrepeat
+    lda #$4D
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 28, x
+    .endrepeat
+    lda #$4E
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 29, x
+    .endrepeat
+    txa
+    clc
+    adc #56
+    bcs :+
+    tax
+    jmp :-
+    :
+    ldx #$00
+    :
+    lda #$4B
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 280 , x
+    .endrepeat
+    lda #$4C
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 281, x
+    .endrepeat
+    lda #$4D
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 308, x
+    .endrepeat
+    lda #$4E
+    .repeat 14, i
+    sta minefield_tiles + 2 * i + 309, x
+    .endrepeat
+    txa
+    clc
+    adc #56
+    cmp #224
+    bcs :+
+    tax
+    jmp :-
+    :
+    lda #$AA ; Init attributes
+    ldx #$00
+    :
+    sta minefield_attributes, x
+    inx
+    cpx #80
+    bcc :-
+
+    rts
 
 update_cursor_sprite: ; ID of cursor sprite in Y
     lda mouse_display_y
@@ -610,9 +894,191 @@ read_controllers:
     sta mouse_display_y
     rts
 
+update_minefield_blank:
+    lda #%00000000
+    sta PPUMASK
+    begin_update_minefield_blank:
+    lda PPUSTATUS
+    lda #$21
+    sta PPUADDR
+    lda #$3E
+    sta PPUADDR
+    lda #<minefield_tiles
+    sta scratch
+    lda #>minefield_tiles
+    sta scratch + 1
+    ldx #$00
+    :
+    lda PPUDATA
+    lda PPUDATA
+    lda PPUDATA
+    lda PPUDATA
+    ldy #$00
+    :
+    lda (scratch), y
+    sta PPUDATA
+    iny
+    cpy #28
+    bcc :-
+    inx
+    cpx #18
+    beq :+
+    lda scratch
+    clc
+    adc #28
+    sta scratch
+    lda scratch + 1
+    adc #$00
+    sta scratch + 1
+    jmp :--
+    :
+    
+    lda #$23 ; Push attributes
+    sta PPUADDR
+    lda #$D0
+    sta PPUADDR
+    lda #<minefield_attributes
+    sta scratch
+    lda #>minefield_attributes
+    sta scratch + 1
+    ldx #$00
+    ldy #$00
+    :
+    lda (scratch), y
+    sta PPUDATA
+    iny
+    cpy #8
+    bne :-
+    inx
+    cpx #5
+    beq :+
+    ldy #$00
+    lda scratch
+    clc
+    adc #$10
+    sta scratch
+    jmp :-
+    :
+    lda #$00
+    sta minefield_update_row
+    ldy #$2B ; Load regular cursor
+    jsr update_cursor_sprite
+    lda #%00011110  ; Enable rendering
+    sta PPUMASK
+    lda PPUSTATUS
+    lda #$00
+    sta PPUADDR
+    ldx #$4E
+    stx PPUSCROLL
+    ldx #$07
+    inc $8000, x
+    sta PPUSCROLL
+    lda #$20
+    sta PPUADDR
+    nop
+    rts
+
+update_minefield:   ; Current row in X
+                    ; Clobbers $00, $01, A, and Y
+    lda screen_update_setting
+    beq :+
+    jmp update_minefield_blank
+    :
+    begin_update_minefield:
+    lda PPUSTATUS
+    lda MinefieldRowTileStartHigh, x
+    sta PPUADDR
+    lda MinefieldRowTileStartLow, x
+    sta PPUADDR
+    lda minefield_update_current_tile
+    sta scratch
+    lda minefield_update_current_tile + 1
+    sta scratch + 1
+    ldy #$00
+    :
+    lda (scratch), y
+    sta PPUDATA
+    iny
+    cpy #28
+    bcc :-
+    lda MinefieldRowTileStartHigh, x
+    sta PPUADDR
+    lda MinefieldRowTileStartLow, x
+    clc
+    adc #$20
+    sta PPUADDR
+    lda minefield_update_current_tile
+    clc
+    adc #28
+    sta scratch
+    lda minefield_update_current_tile + 1
+    adc #$00
+    sta scratch + 1
+    ldy #$00
+    :
+    lda (scratch), y
+    sta PPUDATA
+    iny
+    cpy #28
+    bcc :-
+
+    lda scratch ; Update where we left off
+    clc
+    adc #28
+    sta minefield_update_current_tile
+    lda scratch + 1
+    adc #$00
+    sta minefield_update_current_tile + 1
+
+    lda #$23 ; Push attributes
+    sta PPUADDR
+    lda MinefieldRowAttributeStartLow, x
+    sta PPUADDR
+    lda minefield_update_current_attribute
+    sta scratch
+    lda #$06 ; This relies on the entire attribute table being in page 6, will break otherwise
+    sta scratch + 1
+    ldy #$00
+    :
+    lda (scratch), y
+    sta PPUDATA
+    iny
+    cpy #8
+    bcc :-
+
+    lda minefield_update_current_attribute ; Update where we left off
+    clc
+    adc #$08
+    sta minefield_update_current_attribute
+    inc minefield_update_row
+    lda minefield_update_row
+    cmp #10
+    bcc :+
+    lda #$00
+    sta minefield_update_row
+    lda #<minefield_tiles
+    sta minefield_update_current_tile
+    lda #>minefield_tiles
+    sta minefield_update_current_tile + 1
+    lda #<minefield_attributes
+    sta minefield_update_current_attribute
+    rts
+    :
+    rts
+
 update_vram:
     lda #$02 ; Push sprites to OAM
     sta OAMDMA
+    lda minefield_update_row ; Check if we have to update the minefield
+    beq :+
+    tax
+    jsr update_minefield
+    lda #$00
+    sta game_state
+    lda screen_update_setting
+    beq end_update_vram
+    rts
+    :
     ldy #$2B ; Load regular cursor sprite
     jsr update_cursor_sprite
     lda frame_count
@@ -624,6 +1090,7 @@ update_vram:
     jsr update_mines_display
     :
     jsr draw_mario
+    end_update_vram:
     bit PPUSTATUS ; Set scroll
     lda #$00
     sta PPUSCROLL
@@ -651,10 +1118,16 @@ nmi:
     jsr update_cursor_sprite
     jsr read_controllers
     lda game_state
+    bne :+ ; Shuffle the mines on every frame the game hasn't started
+    jsr shuffle_mines
+    jmp :++
+:
+    jsr rand ; Increment the RNG on every frame after the game has started
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
 :
+
     pla ; Pop registers from stack
     tay
     pla
@@ -665,22 +1138,31 @@ nmi:
     cld
     
     jsr update_vram
+    jsr rand
     lda mouse_display_x
     sta mouse_x
     lda mouse_display_y
     sta mouse_y
     jsr read_controllers
-    lda controller_input
+    lda game_state ; Check current game state
+    bne :++ ; Shuffle the mines on every frame the game hasn't started
+    lda controller_input ; If the game isn't started yet, start the game when start is pressed
     and #BUTTON_START
     beq :+
     lda #$01
     sta game_state
+    sta minefield_update_row
+    jsr init_minefield
+    jmp :+++
     :
-    lda game_state ; Check current game state
+    jsr shuffle_mines
+    jmp :++
+    :
+    jsr rand ; Increment the RNG on every frame after the game has started
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
-:
+    :
     lda controller_input
     and #BUTTON_A
     bne :-
@@ -741,6 +1223,15 @@ DigitTableLow:
 
 DigitTableHigh:
     .hibytes DigitTable
+
+MinefieldRowTileStartHigh:
+    .byte $21, $21, $21, $21, $22, $22, $22, $22, $23, $23
+
+MinefieldRowTileStartLow:
+    .byte $02, $42, $82, $C2, $02, $42, $82, $C2, $02, $42
+
+MinefieldRowAttributeStartLow:
+    .byte $D0, $D0, $D8, $D8, $E0, $E0, $E8, $E8, $F0, $F0
 
 Rows1to7:
     .byte $20, $21, $22, $22, $22, $22, $22, $22, $23, $24, $24, $24, $24, $25, $26, $26, $26, $26, $24, $24, $24, $24, $24, $27, $22, $22, $22, $22, $22, $22, $28, $29
