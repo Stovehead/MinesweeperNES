@@ -56,7 +56,7 @@ GRID_HEIGHT = 9
     screen_update_setting: .res 1   ; 0 = update in 9 frames with no blanking
                                     ; 1 = update in 2 frames with blanking
 
-.segment "PAGE3ONWARDS" 
+.bss
     mine_shuffle_space: .res 128
     minefield_row_0: .res 14
     .res 2
@@ -284,8 +284,6 @@ load_nametable:
     sta PPUDATA
     dex
     bne :-
-
-    ldx
 
     ldx #$00 ; Init OAM
     lda #$FF
