@@ -490,10 +490,9 @@ shuffle_mines: ; Clobbers $00
     tay
     lda mine_shuffle_space, y
     bne :- ; Retry if we rolled another mine
-    sta scratch ; Swap them
-    lda mine_shuffle_space, x
+    lda #$01 ; Swap them
     sta mine_shuffle_space, y
-    lda scratch
+    lda #$00
     sta mine_shuffle_space, x
     reshuffle_loop_end:
     inx
@@ -987,9 +986,8 @@ update_minefield_blank:
 update_minefield:   ; Current row in X
                     ; Clobbers $00, $01, A, and Y
     lda screen_update_setting
-    beq :+
+    beq begin_update_minefield
     jmp update_minefield_blank
-    :
     begin_update_minefield:
     lda PPUSTATUS
     lda MinefieldRowTileStartHigh, x
@@ -1132,6 +1130,12 @@ nmi:
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
+
+    bit PPUSTATUS ; Set scroll
+    lda #$00
+    sta PPUSCROLL
+    lda #8
+    sta PPUSCROLL
 :
 
     pla ; Pop registers from stack
