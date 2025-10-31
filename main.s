@@ -77,7 +77,7 @@ GRID_HEIGHT = 9
     minefield_row_8: .res 14
     .res 2
     minefield_tiles: .res 504
-    minefield_attributes: .res 72
+    minefield_attributes: .res 40
 
 
 .segment "HEADER"
@@ -989,6 +989,11 @@ update_minefield:   ; Current row in X
     beq begin_update_minefield
     jmp update_minefield_blank
     begin_update_minefield:
+    lda minefield_update_row
+    cmp #$01
+    beq :+
+    jmp grid_pop_slide
+    :
     lda PPUSTATUS
     lda MinefieldRowTileStartHigh, x
     sta PPUADDR
@@ -1066,8 +1071,53 @@ update_minefield:   ; Current row in X
     sta minefield_update_current_tile + 1
     lda #<minefield_attributes
     sta minefield_update_current_attribute
-    rts
     :
+    ldy #$2D ; Load hourglass for cursor sprite
+    jsr update_cursor_sprite
+    rts
+
+grid_pop_slide:
+    tsx 
+    stx scratch + 9
+    ldx #$FF
+    txs
+    lda PPUSTATUS
+    pla
+    sta PPUADDR
+    pla
+    sta PPUADDR
+    .repeat 4
+    .repeat 28
+    pla
+    sta PPUDATA
+    .endrepeat
+    .repeat 4
+    lda PPUDATA
+    .endrepeat
+    .endrepeat
+    pla
+    sta PPUADDR
+    pla
+    sta PPUADDR
+    .repeat 8
+    pla
+    sta PPUDATA
+    .endrepeat
+    inc minefield_update_row
+    inc minefield_update_row
+    lda minefield_update_row
+    cmp #10
+    bcc :+
+    lda #$00
+    sta minefield_update_row
+    ldy #$2B ; Load normal cursor sprite
+    jmp :++
+    :
+    ldy #$2D ; Load hourglass for cursor sprite
+    :
+    ldx scratch + 9
+    txs
+    jsr update_cursor_sprite
     rts
 
 update_vram:
@@ -1077,8 +1127,6 @@ update_vram:
     beq :+
     tax
     jsr update_minefield
-    lda #$00
-    sta game_state
     lda screen_update_setting
     beq end_update_vram
     rts
@@ -1100,6 +1148,51 @@ update_vram:
     sta PPUSCROLL
     lda #8
     sta PPUSCROLL
+    rts
+
+push_grid_tiles_to_stack:
+    ldx minefield_update_row
+    lda MinefieldRowTileStartHigh, x
+    sta $0100
+    lda MinefieldRowTileStartLow, x
+    sta $0100 + 1
+    ldy #$00
+    lda minefield_update_current_tile
+    sta scratch
+    lda minefield_update_current_tile + 1
+    sta scratch + 1
+    :
+    lda (scratch), y
+    sta $0100 + 2, y
+    iny
+    cpy #112
+    bne :-
+    clc
+    lda minefield_update_current_tile
+    adc #112
+    sta minefield_update_current_tile
+    lda minefield_update_current_tile + 1
+    adc #$00
+    sta minefield_update_current_tile + 1
+    lda #$23
+    sta $0100 + 2 + 112
+    lda MinefieldRowAttributeStartLow, x
+    sta $0100 + 2 + 112 + 1
+    ldy #$00
+    lda minefield_update_current_attribute
+    sta scratch
+    lda #$06
+    sta scratch + 1
+    :
+    lda (scratch), y
+    sta $0100 + 2 + 112 + 2, y
+    iny
+    cpy #8
+    bne :-
+    clc
+    lda minefield_update_current_attribute
+    adc #8
+    sta minefield_update_current_attribute
     rts
 
 nmi:
@@ -1161,7 +1254,6 @@ nmi:
     beq :+
     lda #$01
     sta game_state
-    sta minefield_update_row
     jsr init_minefield
     jmp :+++
     :
@@ -1176,6 +1268,13 @@ nmi:
     lda controller_input
     and #BUTTON_A
     bne :-
+
+    lda minefield_update_row
+    cmp #$02
+    bcc :+
+    jsr push_grid_tiles_to_stack
+    :
+
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
