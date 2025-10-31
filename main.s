@@ -395,9 +395,6 @@ load_nametable:
     lda #<minefield_attributes
     sta minefield_update_current_attribute
 
-    lda #$01 ; Set update setting to blank (temporary)
-    sta screen_update_setting
-
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
 
@@ -622,12 +619,11 @@ init_minefield: ; Clobbers X and A
     jmp :-
     :
     lda #$AA ; Init attributes
-    ldx #$00
+    ldx #40
     :
+    dex
     sta minefield_attributes, x
-    inx
-    cpx #80
-    bcc :-
+    bne :-
 
     rts
 
@@ -984,7 +980,7 @@ update_minefield_blank:
     rts
 
 update_minefield:   ; Current row in X
-                    ; Clobbers $00, $01, A, and Y
+                    ; Clobbers $00, $01, $09, A, and Y
     lda screen_update_setting
     beq begin_update_minefield
     jmp update_minefield_blank
@@ -994,10 +990,10 @@ update_minefield:   ; Current row in X
     beq :+
     jmp grid_pop_slide
     :
-    lda PPUSTATUS
-    lda MinefieldRowTileStartHigh, x
-    sta PPUADDR
-    lda MinefieldRowTileStartLow, x
+    lda PPUSTATUS ; This function is pretty inefficient
+    lda MinefieldRowTileStartHigh, x ; The pop slide is way more efficient
+    sta PPUADDR ; But we can still use this for updating the first row
+    lda MinefieldRowTileStartLow, x ; It's at least good enough for that
     sta PPUADDR
     lda minefield_update_current_tile
     sta scratch
@@ -1045,7 +1041,7 @@ update_minefield:   ; Current row in X
     sta PPUADDR
     lda minefield_update_current_attribute
     sta scratch
-    lda #$06 ; This relies on the entire attribute table being in page 6, will break otherwise
+    lda #>minefield_attributes ; This relies on the entire attribute table being in one page, will break otherwise
     sta scratch + 1
     ldy #$00
     :
@@ -1060,62 +1056,57 @@ update_minefield:   ; Current row in X
     adc #$08
     sta minefield_update_current_attribute
     inc minefield_update_row
-    lda minefield_update_row
-    cmp #10
-    bcc :+
-    lda #$00
-    sta minefield_update_row
-    lda #<minefield_tiles
-    sta minefield_update_current_tile
-    lda #>minefield_tiles
-    sta minefield_update_current_tile + 1
-    lda #<minefield_attributes
-    sta minefield_update_current_attribute
-    :
+
     ldy #$2D ; Load hourglass for cursor sprite
     jsr update_cursor_sprite
     rts
 
 grid_pop_slide:
     tsx 
-    stx scratch + 9
-    ldx #$FF
+    stx scratch + 9 ; Store stack pointer
+    ldx #$FF ; Move stack
     txs
     lda PPUSTATUS
-    pla
+    pla ; Get address for tiles
     sta PPUADDR
     pla
     sta PPUADDR
     .repeat 4
-    .repeat 28
+    .repeat 28 ; Load tiles
     pla
     sta PPUDATA
     .endrepeat
     .repeat 4
-    lda PPUDATA
+    lda PPUDATA ; Skip the 2 tiles at the end and 2 tiles at the beginning
     .endrepeat
     .endrepeat
     pla
-    sta PPUADDR
+    sta PPUADDR ; Get address for attributes
     pla
     sta PPUADDR
     .repeat 8
     pla
-    sta PPUDATA
+    sta PPUDATA ; Load attributes
     .endrepeat
     inc minefield_update_row
-    inc minefield_update_row
+    inc minefield_update_row ; We've gone down two rows, so increment twice
     lda minefield_update_row
-    cmp #10
+    cmp #10 ; Stop the process once we get past the 9th row
     bcc :+
     lda #$00
-    sta minefield_update_row
+    sta minefield_update_row ; Set these variables back to what they were originally
+    lda #<minefield_tiles
+    sta minefield_update_current_tile
+    lda #>minefield_tiles
+    sta minefield_update_current_tile + 1
+    lda #<minefield_attributes
+    sta minefield_update_current_attribute
     ldy #$2B ; Load normal cursor sprite
     jmp :++
     :
     ldy #$2D ; Load hourglass for cursor sprite
     :
-    ldx scratch + 9
+    ldx scratch + 9 ; Restore stack
     txs
     jsr update_cursor_sprite
     rts
@@ -1150,14 +1141,14 @@ update_vram:
     sta PPUSCROLL
     rts
 
-push_grid_tiles_to_stack:
-    ldx minefield_update_row
-    lda MinefieldRowTileStartHigh, x
+push_grid_tiles_to_stack: ; Clobbers $00, $01, A, X, and Y
+    ldx minefield_update_row ; Load pointer to row in nametable
+    lda MinefieldRowTileStartHigh, x 
     sta $0100
     lda MinefieldRowTileStartLow, x
     sta $0100 + 1
     ldy #$00
-    lda minefield_update_current_tile
+    lda minefield_update_current_tile ; Load tile data
     sta scratch
     lda minefield_update_current_tile + 1
     sta scratch + 1
@@ -1165,23 +1156,23 @@ push_grid_tiles_to_stack:
     lda (scratch), y
     sta $0100 + 2, y
     iny
-    cpy #112
+    cpy #112 ; Loading 4 rows of tiles
     bne :-
     clc
-    lda minefield_update_current_tile
+    lda minefield_update_current_tile ; Update pointer to tile data
     adc #112
     sta minefield_update_current_tile
     lda minefield_update_current_tile + 1
     adc #$00
     sta minefield_update_current_tile + 1
-    lda #$23
+    lda #$23 ; Load pointer to attribute in nametable
     sta $0100 + 2 + 112
     lda MinefieldRowAttributeStartLow, x
     sta $0100 + 2 + 112 + 1
     ldy #$00
-    lda minefield_update_current_attribute
+    lda minefield_update_current_attribute ; Load attribute data
     sta scratch
-    lda #$06
+    lda #>minefield_attributes ; This relies on the entire attribute table being in one page, will break otherwise
     sta scratch + 1
     :
     lda (scratch), y
@@ -1190,7 +1181,7 @@ push_grid_tiles_to_stack:
     cpy #8
     bne :-
     clc
-    lda minefield_update_current_attribute
+    lda minefield_update_current_attribute ; Update pointer to attributes
     adc #8
     sta minefield_update_current_attribute
     rts
@@ -1270,7 +1261,7 @@ nmi:
     bne :-
 
     lda minefield_update_row
-    cmp #$02
+    cmp #$02 ; Push tiles to stack for every row after the first
     bcc :+
     jsr push_grid_tiles_to_stack
     :
