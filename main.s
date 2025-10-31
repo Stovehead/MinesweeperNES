@@ -30,7 +30,7 @@ GRID_HEIGHT = 9
     controller_input_prev: .res 1
     controller_input: .res 1
     mouse_state_prev: .res 1
-    mouse_state_new: .res 1
+    mouse_state: .res 1
     mouse_flags: .res 1
     mouse_display_x: .res 1
     mouse_display_y: .res 1
@@ -56,6 +56,7 @@ GRID_HEIGHT = 9
     minefield_update_current_attribute: .res 1
     screen_update_setting: .res 1   ; 0 = update in 9 frames with no blanking
                                     ; 1 = update in 2 frames with blanking
+    snes_mouse_enabled: .res 1
 
 .bss
     mine_shuffle_space: .res 128
@@ -395,6 +396,63 @@ load_nametable:
     sta minefield_update_current_tile + 1
     lda #<minefield_attributes
     sta minefield_update_current_attribute
+
+check_snes_mouse:
+    lda #$01
+    sta scratch
+
+    sta JOY1
+    ldy JOY1 ; Sending a clock while the latch is turned on will init the sensitivity
+    lda #$00
+    sta JOY1
+
+    read_loop_1:
+    lda JOY2 ; Mouse should be connected to port 2
+    lsr
+    rol scratch
+    bcc read_loop_1
+
+    lda scratch
+    beq :+ 
+    jmp after_check_mouse ; If the first report isn't all 0s, then it's not a mouse
+    :
+
+    lda #$01
+    sta scratch
+    
+    read_loop_2:
+    lda JOY2 
+    lsr
+    rol scratch
+    bcc read_loop_2
+
+    lda scratch
+    and #%00001111
+    cmp #%00000001 ; Check signature to see if it's a mouse
+    beq :+
+    jmp after_check_mouse
+    :
+
+    lda #$01
+    sta snes_mouse_enabled ; Enable the mouse
+
+    sta scratch
+    read_loop_3: ; The other reads aren't really needed, just doing them to be safe
+    lda JOY2 
+    lsr
+    rol scratch
+    bcc read_loop_3
+
+    lda #$01
+    sta scratch
+
+    read_loop_4:
+    lda JOY2 
+    lsr
+    rol scratch
+    bcc read_loop_4
+
+after_check_mouse:
 
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
@@ -822,26 +880,7 @@ draw_mario: ; Clobbers X
     stx OAMBUFFER + (4 * 7) + 1
     rts
 
-read_controllers:
-    lda controller_input
-    sta controller_input_prev
-
-    lda #$01
-    sta controller_input
-
-    sta JOY1
-    lda #$00
-    sta JOY1
-
-    read_loop:
-    lda JOY1
-    lsr
-    rol controller_input
-    bcc read_loop
-
-    rts
-
-update_mouse_position:
+controller_to_mouse_buttons:
     lda controller_input
     and #(BUTTON_LEFT | BUTTON_RIGHT)
     cmp #BUTTON_RIGHT
@@ -873,6 +912,119 @@ update_mouse_position:
     after_up_down:
     sta mouse_delta_y
 
+    lda controller_input
+    and #%00000111 ; Mask out all but A, B, and select
+    sta mouse_state
+    rts
+
+read_controllers: ; Clobbers $00, A, and Y
+
+    lda #$01
+    sta JOY1
+    lda controller_input
+    and #BUTTON_START ; Check the start button
+    beq :+
+    lda controller_input_prev
+    and #BUTTON_START ; Check that we didn't press the start button on the last frame
+    bne :+
+    lda JOY1 ; Change sensitivity if the start button is pressed
+    :
+    lda #$00
+    sta JOY1
+
+    lda controller_input
+    sta controller_input_prev
+    lda mouse_state
+    sta mouse_state_prev
+    lda #$01
+    sta controller_input
+
+    read_loop:
+    lda JOY1
+    lsr
+    rol controller_input
+    bcc read_loop
+
+    lda snes_mouse_enabled ; Check if there is a mouse
+    bne :+
+    jmp controller_to_mouse_buttons ; If not, use the controller as a mouse
+    :
+
+    lda #$01
+    sta scratch
+    mouse_read_loop_1: ; First read shouldn't matter because it should be all 0s
+    lda JOY2
+    lsr
+    rol scratch
+    bcc mouse_read_loop_1
+
+    lda scratch 
+    beq :+
+    jmp controller_to_mouse_buttons ; Still checking the first read though
+    :
+
+    lda #$01
+    sta scratch
+    mouse_read_loop_2:
+    lda JOY2
+    lsr
+    rol scratch
+    bcc mouse_read_loop_2
+
+    lda scratch
+    and #%00001111
+    cmp #%00000001 ; Check signature to see if it's a mouse
+    beq :+
+    jmp controller_to_mouse_buttons
+    :
+
+    lda controller_input
+    and #BUTTON_SELECT ; Get the select (shift) button
+    sta mouse_state
+
+    lda scratch ; Get the mouse buttons
+    .repeat 6 ; Get last two bits
+    lsr
+    .endrepeat
+    
+    ora mouse_state
+    sta mouse_state
+
+    lda #$01
+    sta scratch
+    mouse_read_loop_3:
+    lda JOY2
+    lsr
+    rol scratch
+    bcc mouse_read_loop_3
+
+    lda scratch ; Get Y displacement
+    bpl :+ ; Convert to two's complement
+    eor #$7F
+    sec
+    adc #$00
+    :
+    sta mouse_delta_y
+
+    lda #$01
+    sta scratch
+    mouse_read_loop_4:
+    lda JOY2
+    lsr
+    rol scratch
+    bcc mouse_read_loop_4
+
+    lda scratch ; Get X displacement
+    bpl :+ ; Convert to two's complement
+    eor #$7F
+    sec
+    adc #$00
+    :
+    sta mouse_delta_x
+
+    rts
+
+update_mouse_position:
     clc ; Update mouse X
     lda mouse_delta_x ; Logic to make sure it doesn't wrap
     bpl check_positive_x
