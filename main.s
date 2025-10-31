@@ -433,6 +433,8 @@ check_snes_mouse:
 
     sta JOY1
     lda JOY2 ; Sending a clock while the latch is turned on will init the sensitivity
+    lda JOY2
+    lda JOY2
     lda #$00
     sta JOY1
 
@@ -440,6 +442,8 @@ check_snes_mouse:
     lda JOY2 ; Mouse should be connected to port 2
     lsr
     rol scratch
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     bcc read_loop_1
 
     lda scratch
@@ -454,6 +458,8 @@ check_snes_mouse:
     lda JOY2 
     lsr
     rol scratch
+    nop
+    nop
     bcc read_loop_2
 
     lda scratch
@@ -986,6 +992,8 @@ read_controllers: ; Clobbers $00, A, and Y
     lda JOY2
     lsr
     rol scratch
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     bcc mouse_read_loop_1
 
     lda scratch 
@@ -999,6 +1007,8 @@ read_controllers: ; Clobbers $00, A, and Y
     lda JOY2
     lsr
     rol scratch
+    nop
+    nop
     bcc mouse_read_loop_2
 
     lda scratch
@@ -1026,6 +1036,8 @@ read_controllers: ; Clobbers $00, A, and Y
     lda JOY2
     lsr
     rol scratch
+    nop
+    nop
     bcc mouse_read_loop_3
 
     lda scratch ; Get Y displacement
@@ -1042,6 +1054,8 @@ read_controllers: ; Clobbers $00, A, and Y
     lda JOY2
     lsr
     rol scratch
+    nop
+    nop
     bcc mouse_read_loop_4
 
     lda scratch ; Get X displacement
