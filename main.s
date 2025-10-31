@@ -27,6 +27,7 @@ GRID_HEIGHT = 9
 .zeropage
     scratch: .res $10
     frame_count: .res 1
+    controller_input_prev: .res 1
     controller_input: .res 1
     mouse_state_prev: .res 1
     mouse_state_new: .res 1
@@ -822,6 +823,9 @@ draw_mario: ; Clobbers X
     rts
 
 read_controllers:
+    lda controller_input
+    sta controller_input_prev
+
     lda #$01
     sta controller_input
 
@@ -835,6 +839,9 @@ read_controllers:
     rol controller_input
     bcc read_loop
 
+    rts
+
+update_mouse_position:
     lda controller_input
     and #(BUTTON_LEFT | BUTTON_RIGHT)
     cmp #BUTTON_RIGHT
@@ -1205,6 +1212,7 @@ nmi:
     ldy #$2D ; Load hourglass for cursor sprite
     jsr update_cursor_sprite
     jsr read_controllers
+    jsr update_mouse_position
     lda game_state
     bne :+ ; Shuffle the mines on every frame the game hasn't started
     jsr shuffle_mines
@@ -1238,6 +1246,7 @@ nmi:
     lda mouse_display_y
     sta mouse_y
     jsr read_controllers
+    jsr update_mouse_position
     lda game_state ; Check current game state
     bne :++ ; Shuffle the mines on every frame the game hasn't started
     lda controller_input ; If the game isn't started yet, start the game when start is pressed
