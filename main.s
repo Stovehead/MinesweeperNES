@@ -23,6 +23,8 @@ BUTTON_RIGHT =  %00000001
 NUM_MINES = 15
 GRID_WIDTH = 14
 GRID_HEIGHT = 9
+GRID_X = 2
+GRID_Y = 8
 
 .zeropage
     scratch: .res $10
@@ -352,6 +354,34 @@ load_nametable:
     lda #125
     sta OAMBUFFER + (4 * 10) + 3
 
+    ; Load tile mask graphics
+    ; Set Y positions
+    lda #$FF
+    .repeat 18, i
+    sta OAMBUFFER + (4 * (11 + i))
+    .endrepeat
+    ; Set X positions
+    lda #$00
+    .repeat 18, i
+    sta OAMBUFFER + (4 * (11 + i)) + 3
+    .endrepeat
+    ; Set attributes
+    lda #%00000010
+    .repeat 18, i
+    sta OAMBUFFER + (4 * (11 + i)) + 2
+    .endrepeat
+    ; Set indices for left half
+    lda #$2F
+    .repeat 9, i
+    sta OAMBUFFER + (4 * (11 + 2 * i)) + 1
+    .endrepeat
+    ; Set indices for right half
+    lda #$31
+    .repeat 9, i
+    sta OAMBUFFER + (4 * (12 + 2 * i)) + 1
+    .endrepeat
+
+
     lda #$00 ; Is this necessary?
     sta OAMADDR
 
@@ -402,7 +432,7 @@ check_snes_mouse:
     sta scratch
 
     sta JOY1
-    ldy JOY1 ; Sending a clock while the latch is turned on will init the sensitivity
+    lda JOY2 ; Sending a clock while the latch is turned on will init the sensitivity
     lda #$00
     sta JOY1
 
@@ -927,7 +957,7 @@ read_controllers: ; Clobbers $00, A, and Y
     lda controller_input_prev
     and #BUTTON_START ; Check that we didn't press the start button on the last frame
     bne :+
-    lda JOY1 ; Change sensitivity if the start button is pressed
+    lda JOY2 ; Change sensitivity if the start button is pressed
     :
     lda #$00
     sta JOY1
@@ -1395,8 +1425,24 @@ nmi:
     jsr rand
     lda mouse_display_x
     sta mouse_x
+    .repeat 4 ; Get grid position
+    lsr
+    .endrepeat
+    sec
+    sbc #(GRID_X / 2)
+    sta mouse_down_x
+
     lda mouse_display_y
+    sec
+    sbc #$07 ; Account for vertical scroll
     sta mouse_y
+    .repeat 4 ; Get grid position
+    lsr
+    .endrepeat
+    sec
+    sbc #(GRID_Y / 2)
+    sta mouse_down_y
+
     jsr read_controllers
     jsr update_mouse_position
     lda game_state ; Check current game state
