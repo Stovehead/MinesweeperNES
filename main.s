@@ -25,6 +25,11 @@ GRID_WIDTH = 14
 GRID_HEIGHT = 9
 GRID_X = 2
 GRID_Y = 8
+MINE_MASK = %00010000
+OPENED_MASK = %00100000
+FLAG_MASK = %01000000
+CLICKED_MINE_MASK = %10000000
+DIGIT_MASK = %00001111
 
 .zeropage
     scratch: .res $10
@@ -62,6 +67,9 @@ GRID_Y = 8
 
 .bss
     mine_shuffle_space: .res 128
+    minefield_tiles: .res 504
+    minefield_attributes: .res 40
+    .res 96 ; Padding to align to the beginning of the page
     minefield_row_0: .res 14
     .res 2
     minefield_row_1: .res 14
@@ -80,8 +88,6 @@ GRID_Y = 8
     .res 2
     minefield_row_8: .res 14
     .res 2
-    minefield_tiles: .res 504
-    minefield_attributes: .res 40
 
 
 .segment "HEADER"
@@ -413,9 +419,9 @@ load_nametable:
     inx
     cpx #113
     bne :-
-    lda #$01
+    lda #MINE_MASK
     :
-    sta mine_shuffle_space, x ; Fill the last 15 with 1s (mines)
+    sta mine_shuffle_space, x ; Fill the last 15 with mines
     inx
     cpx #128
     bne :-
@@ -535,13 +541,7 @@ rand: ; Brad Smith's 16-bit galois linear-feedback shift register PRNG implement
     pla
     rts
 
-shuffle_mines: ; Clobbers $00
-    pha
-    txa
-    pha
-    tya
-    pha
-
+shuffle_mines: ; Clobbers $00, A, X, and Y
     ldx #127
     :
     jsr rand ; Fisher-Yates algorithm
@@ -582,19 +582,13 @@ shuffle_mines: ; Clobbers $00
     tay
     lda mine_shuffle_space, y
     bne :- ; Retry if we rolled another mine
-    lda #$01 ; Swap them
+    lda #MINE_MASK ; Swap them
     sta mine_shuffle_space, y
     lda #$00
     sta mine_shuffle_space, x
     reshuffle_loop_end:
     inx
     bpl reshuffle_loop ; 7th bit should be set when x = 128, so that's when we break out of the loop
-
-    pla
-    tay
-    pla
-    tax
-    pla
     rts
 
 init_minefield: ; Clobbers X and A
@@ -1159,7 +1153,7 @@ update_minefield_blank:
     ldy #$00
     lda scratch
     clc
-    adc #$10
+    adc #$08
     sta scratch
     jmp :-
     :
