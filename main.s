@@ -30,6 +30,10 @@ OPENED_MASK = %00100000
 FLAG_MASK = %01000000
 CLICKED_MINE_MASK = %10000000
 DIGIT_MASK = %00001111
+GAME_NOT_STARTED = 0
+GAME_IN_PROGRESS = 1
+GAME_OVER = 2
+GAME_WON = 3
 
 .zeropage
     scratch: .res $10
@@ -64,6 +68,7 @@ DIGIT_MASK = %00001111
     screen_update_setting: .res 1   ; 0 = update in 9 frames with no blanking
                                     ; 1 = update in 2 frames with blanking
     snes_mouse_enabled: .res 1
+    currently_shuffling_mines: .res 1
 
 .bss
     mine_shuffle_space: .res 128
@@ -417,7 +422,7 @@ load_nametable:
     :
     sta mine_shuffle_space, x
     inx
-    cpx #113
+    cpx #(128 - NUM_MINES)
     bne :-
     lda #MINE_MASK
     :
@@ -542,6 +547,8 @@ rand: ; Brad Smith's 16-bit galois linear-feedback shift register PRNG implement
     rts
 
 shuffle_mines: ; Clobbers $00, A, X, and Y
+    lda #$01
+    sta currently_shuffling_mines
     ldx #127
     :
     jsr rand ; Fisher-Yates algorithm
@@ -589,72 +596,89 @@ shuffle_mines: ; Clobbers $00, A, X, and Y
     reshuffle_loop_end:
     inx
     bpl reshuffle_loop ; 7th bit should be set when x = 128, so that's when we break out of the loop
+    lda #$00
+    sta currently_shuffling_mines
     rts
 
-init_minefield: ; Clobbers X and A
-    ldx #$00
+init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
+    ldy #$01
+    sty mines_digits_buffer + 1
+    ldy #$05
+    sty mines_digits_buffer
+    ldy #$00
+    sty opened_tiles
+    sty num_flags
+    sty seconds_elapsed
+    sty time_accumulator
+    sty time_accumulator + 1
+    sty time_accumulator + 2
+    sty timer_digits_buffer
+    sty timer_digits_buffer + 1
+    sty timer_digits_buffer + 2
+    sty mines_digits_buffer + 2
+    lda #>minefield_row_1 ; It's a surprise tool that will help us later
+    sta scratch + 1
+    .repeat 9, i ; Copying from shuffle space to the actual grid
+    ldx #$00 ; This code is probably horribly inefficient, but it seems... good enough
     :
-    lda mine_shuffle_space, x
-    sta minefield_row_0, x
+    lda mine_shuffle_space + 14 * i, x ; Load the current square
+    beq :+ ; Check if it's a mine or not
+    clc ; If it is, increment all the adjacent tiles
+    stx scratch + 2
+    lda #<minefield_row_0 + 16 * i
+    adc scratch + 2 ; Store address of current square
+    sec
+    sbc #$11 ; Go to the top left
+    sta scratch ; Store the address (This may go out of bounds, but that's ok!)
+    clc
+    lda (scratch), y ; Increment top left
+    adc #$01
+    sta (scratch), y
+    inc scratch
+    lda (scratch), y ; Increment top
+    adc #$01
+    sta (scratch), y 
+    inc scratch
+    lda (scratch), y ; Increment top right
+    adc #$01
+    sta (scratch), y
+    lda scratch
+    adc #$0E ; Go to middle left
+    sta scratch
+    clc
+    lda (scratch), y ; Increment left
+    adc #$01
+    sta (scratch), y
+    inc scratch ; Skip center
+    inc scratch
+    lda (scratch), y ; Increment right
+    adc #$01
+    sta (scratch), y
+    lda scratch
+    adc #$0E ; Got to bottom left
+    sta scratch
+    clc
+    lda (scratch), y ; Increment bottom left
+    adc #$01
+    sta (scratch), y
+    inc scratch
+    lda (scratch), y ; Increment bottom
+    adc #$01
+    sta (scratch), y
+    inc scratch
+    lda (scratch), y ; Increment bottom right
+    adc #$01
+    sta (scratch), y
+    lda #MINE_MASK ; It's a mine, so load a mine to place there
+    :
+    sta scratch + 2
+    lda minefield_row_0 + 16 * i, x
+    ora scratch + 2 ; Or it in order to not overwrite what's already there
+    sta minefield_row_0 + 16 * i, x
     inx
     cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 1, x
-    sta minefield_row_1, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 2, x
-    sta minefield_row_2, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 3, x
-    sta minefield_row_3, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 4, x
-    sta minefield_row_4, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 5, x
-    sta minefield_row_5, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 6, x
-    sta minefield_row_6, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 7, x
-    sta minefield_row_7, x
-    inx
-    cpx #14
-    bne :-
-    ldx #$00
-    :
-    lda mine_shuffle_space + 14 * 8, x
-    sta minefield_row_8, x
-    inx
-    cpx #14
-    bne :-
+    bne :--
+    .endrepeat
 
     ldx #$00 ; Init tiles
     :
@@ -1405,6 +1429,8 @@ nmi:
     jsr update_mouse_position
     lda game_state
     bne :+ ; Shuffle the mines on every frame the game hasn't started
+    lda currently_shuffling_mines
+    bne :++
     jsr shuffle_mines
     jmp :++
 :
@@ -1412,13 +1438,13 @@ nmi:
     cmp #$01
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
-
+:
     bit PPUSTATUS ; Set scroll
     lda #$00
     sta PPUSCROLL
     lda #8
     sta PPUSCROLL
-:
+
 
     pla ; Pop registers from stack
     tay
@@ -1458,7 +1484,7 @@ nmi:
     lda controller_input ; If the game isn't started yet, start the game when start is pressed
     and #BUTTON_START
     beq :+
-    lda #$01
+    lda #GAME_IN_PROGRESS
     sta game_state
     jsr init_minefield
     jmp :+++
@@ -1556,6 +1582,42 @@ Rows1to7:
     .byte $20, $2A, $1A, $1B, $0C, $1C, $0E, $1B, $2B, $2C, $2C, $2C, $2C, $20, $35, $36, $36, $37, $30, $2C, $2C, $2C, $2C, $31, $1A, $1B, $1A, $1B, $1A, $1B, $32, $29
     .byte $20, $3B, $3C, $3C, $3C, $3C, $3C, $3C, $3D, $3E, $3E, $3E, $3E, $3E, $3F, $3F, $3F, $3F, $40, $3E, $3E, $3E, $3E, $41, $3C, $3C, $3C, $3C, $3C, $3C, $42, $29
     .byte $43, $44, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $45, $46, $47
+
+TilePalettes:
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+
+TilePalettesGameOver:
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02, $02
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+    .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
+    .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
 
 Palettes:
     ; Background Palette
