@@ -702,19 +702,19 @@ init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
 
     ldx #$00 ; Init tiles
     :
-    lda #$4B
+    lda #$4C
     .repeat 14, i
     sta minefield_tiles + 2 * i, x
     .endrepeat
-    lda #$4C
+    lda #$4D
     .repeat 14, i
     sta minefield_tiles + 2 * i + 1, x
     .endrepeat
-    lda #$4D
+    lda #$4E
     .repeat 14, i
     sta minefield_tiles + 2 * i + 28, x
     .endrepeat
-    lda #$4E
+    lda #$4F
     .repeat 14, i
     sta minefield_tiles + 2 * i + 29, x
     .endrepeat
@@ -727,19 +727,19 @@ init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
     :
     ldx #$00
     :
-    lda #$4B
+    lda #$4C
     .repeat 14, i
     sta minefield_tiles + 2 * i + 280 , x
     .endrepeat
-    lda #$4C
+    lda #$4D
     .repeat 14, i
     sta minefield_tiles + 2 * i + 281, x
     .endrepeat
-    lda #$4D
+    lda #$4E
     .repeat 14, i
     sta minefield_tiles + 2 * i + 308, x
     .endrepeat
-    lda #$4E
+    lda #$4F
     .repeat 14, i
     sta minefield_tiles + 2 * i + 309, x
     .endrepeat
@@ -1489,6 +1489,7 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     and #%00001111
     cmp #$0E
     bcs @begin
+    inc opened_tiles
     stx scratch
     lda (scratch), y
     tax
