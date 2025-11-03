@@ -255,9 +255,9 @@ load_nametable:
     sta PPUDATA
     ldx #14
 :
-    lda #$4B
-    sta PPUDATA
     lda #$4C
+    sta PPUDATA
+    lda #$4D
     sta PPUDATA
     dex
     bne :-
@@ -271,9 +271,9 @@ load_nametable:
     sta PPUDATA
     ldx #14
 :
-    lda #$4D
-    sta PPUDATA
     lda #$4E
+    sta PPUDATA
+    lda #$4F
     sta PPUDATA
     dex
     bne :-
