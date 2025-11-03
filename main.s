@@ -1,3 +1,5 @@
+.feature line_continuations +
+
 PPUCTRL = $2000
 PPUMASK = $2001
 PPUSTATUS = $2002
@@ -34,6 +36,7 @@ GAME_NOT_STARTED = 0
 GAME_IN_PROGRESS = 1
 GAME_OVER = 2
 GAME_WON = 3
+TILE_UPDATE_BUFFER_SIZE = 8
 
 .zeropage
     scratch: .res $10
@@ -70,6 +73,8 @@ GAME_WON = 3
     snes_mouse_enabled: .res 1
     currently_shuffling_mines: .res 1
     tile_stack_begin: .res 1
+    num_tiles_buffered: .res 1
+    tile_update_buffer: .res TILE_UPDATE_BUFFER_SIZE
 
 .bss
     mine_shuffle_space: .res 128
@@ -547,7 +552,7 @@ rand: ; Brad Smith's 16-bit galois linear-feedback shift register PRNG implement
     pla
     rts
 
-shuffle_mines: ; Clobbers $00, A, X, and Y
+shuffle_mines: ; Clobbers $0A, A, X, and Y
     lda #$01
     sta currently_shuffling_mines
     ldx #127
@@ -557,10 +562,10 @@ shuffle_mines: ; Clobbers $00, A, X, and Y
     and #%01111111
     tay
     lda mine_shuffle_space, x
-    sta scratch
+    sta scratch + $A
     lda mine_shuffle_space, y
     sta mine_shuffle_space, x
-    lda scratch
+    lda scratch + $A
     sta mine_shuffle_space, y
     dex
     beq :+
@@ -568,10 +573,10 @@ shuffle_mines: ; Clobbers $00, A, X, and Y
     and #%01111111
     tay
     lda mine_shuffle_space, x
-    sta scratch
+    sta scratch + $A
     lda mine_shuffle_space, y
     sta mine_shuffle_space, x
-    lda scratch
+    lda scratch + $A
     sta mine_shuffle_space, y
     dex
     jmp :-
@@ -602,6 +607,20 @@ shuffle_mines: ; Clobbers $00, A, X, and Y
     rts
 
 init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
+    ldx #$0E
+    lda #$00
+    :
+    dex
+    sta minefield_row_0, x
+    sta minefield_row_1, x
+    sta minefield_row_2, x
+    sta minefield_row_3, x
+    sta minefield_row_4, x
+    sta minefield_row_5, x
+    sta minefield_row_6, x
+    sta minefield_row_7, x
+    sta minefield_row_8, x
+    bne :-
     ldy #$01
     sty mines_digits_buffer + 1
     ldy #$05
@@ -756,7 +775,7 @@ update_cursor_sprite: ; ID of cursor sprite in Y
     sta OAMADDR, x  ; indexed write dummy read cycle puts ppu open bus on the cpu bus before the write cycle
     rts
 
-increment_timer: ; Clobbers A, $00, $01, $02, $03
+increment_timer: ; Clobbers A
     ; Magic constant: 00000100 01000010 01111001
     lda seconds_elapsed + 1 ; Check if the timer is already at 999
     cmp #$09
@@ -972,7 +991,7 @@ controller_to_mouse_buttons:
     sta mouse_state
     rts
 
-read_controllers: ; Clobbers $00, A, and Y
+read_controllers: ; Clobbers $0A, A, and Y
 
     lda #$01
     sta JOY1
@@ -1006,31 +1025,31 @@ read_controllers: ; Clobbers $00, A, and Y
     :
 
     lda #$01
-    sta scratch
+    sta scratch + $A
     mouse_read_loop_1: ; First read shouldn't matter because it should be all 0s
     lda JOY2
     lsr
-    rol scratch
+    rol scratch + $A
     nop ; Need at least 14 cycles between reads for Hyper Click mice
     nop
     bcc mouse_read_loop_1
 
-    lda scratch 
+    lda scratch + $A
     beq :+
     jmp controller_to_mouse_buttons ; Still checking the first read though
     :
 
     lda #$01
-    sta scratch
+    sta scratch + $A
     mouse_read_loop_2:
     lda JOY2
     lsr
-    rol scratch
+    rol scratch + $A
     nop
     nop
     bcc mouse_read_loop_2
 
-    lda scratch
+    lda scratch + $A
     and #%00001111
     cmp #%00000001 ; Check signature to see if it's a mouse
     beq :+
@@ -1041,7 +1060,7 @@ read_controllers: ; Clobbers $00, A, and Y
     and #BUTTON_SELECT ; Get the select (shift) button
     sta mouse_state
 
-    lda scratch ; Get the mouse buttons
+    lda scratch + $A ; Get the mouse buttons
     .repeat 6 ; Get last two bits
     lsr
     .endrepeat
@@ -1050,16 +1069,16 @@ read_controllers: ; Clobbers $00, A, and Y
     sta mouse_state
 
     lda #$01
-    sta scratch
+    sta scratch + $A
     mouse_read_loop_3:
     lda JOY2
     lsr
-    rol scratch
+    rol scratch + $A
     nop
     nop
     bcc mouse_read_loop_3
 
-    lda scratch ; Get Y displacement
+    lda scratch + $A ; Get Y displacement
     bpl :+ ; Convert to two's complement
     eor #$7F
     sec
@@ -1068,16 +1087,16 @@ read_controllers: ; Clobbers $00, A, and Y
     sta mouse_delta_y
 
     lda #$01
-    sta scratch
+    sta scratch + $A
     mouse_read_loop_4:
     lda JOY2
     lsr
-    rol scratch
+    rol scratch + $A
     nop
     nop
     bcc mouse_read_loop_4
 
-    lda scratch ; Get X displacement
+    lda scratch + $A ; Get X displacement
     bpl :+ ; Convert to two's complement
     eor #$7F
     sec
@@ -1408,15 +1427,53 @@ push_grid_tiles_to_stack: ; Clobbers $00, $01, A, X, and Y
     sta minefield_update_current_attribute
     rts
 
-update_tilemap:
+buffer_tiles: ; Clobbers $02 and A
+    sta scratch + 2
+    lda num_tiles_buffered
+    cmp #TILE_UPDATE_BUFFER_SIZE 
+    bcc :++
+    bne :+
+    inc num_tiles_buffered
+    :
+    rts
+    :
+    tay
+    lda scratch + 2
+    sta tile_update_buffer, y
+    inc num_tiles_buffered
+    ldy #$00
     rts
 
-open_tile: ; Clobbers $00, $01, X, Y, and A
+.macro push_if_openable
+    sta scratch
+    tax
+    lda (scratch), y
+    tay
+    and #(FLAG_MASK | OPENED_MASK)
+    bne :+
+    tya
+    ldy #$00
+    ora #OPENED_MASK
+    sta (scratch), y
+    txa
+    pha
+    :
+    ldy #$00
+    txa
+.endmacro
+
+open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     ldy #>minefield_row_0
     sty scratch + 1
     tsx 
     stx tile_stack_begin
     ldy #$00
+    sta scratch
+    tax
+    lda (scratch), y
+    ora #OPENED_MASK
+    sta (scratch), y
+    txa
     jmp @after_pull
     @begin:
     tsx
@@ -1435,9 +1492,6 @@ open_tile: ; Clobbers $00, $01, X, Y, and A
     stx scratch
     lda (scratch), y
     tax
-    and #(FLAG_MASK | OPENED_MASK)
-    bne @begin
-    txa
     and #MINE_MASK
     beq :+
     lda #GAME_OVER
@@ -1448,39 +1502,41 @@ open_tile: ; Clobbers $00, $01, X, Y, and A
     :
     txa
     :
-    ora #OPENED_MASK
-    sta (scratch), y
     lda scratch
-    jsr update_tilemap
+    jsr buffer_tiles
     txa
     and #DIGIT_MASK
     bne @begin
     lda scratch
     sec
     sbc #$11
-    pha
+    push_if_openable
     clc
     adc #$01
-    pha
+    push_if_openable
     clc
     adc #$01
-    pha
+    push_if_openable
     clc
     adc #$0E
-    pha
+    push_if_openable
     clc
     adc #$02
-    pha
+    push_if_openable
     clc
     adc #$0E
-    pha
+    push_if_openable
     clc
     adc #$01
-    pha
+    push_if_openable
     clc
     adc #$01
-    pha
-    jmp @after_done_check
+    push_if_openable
+    jmp @begin
+
+update_tilemap:
+    
+    rts
 
 nmi:
     pha ; Push registers to stack
@@ -1699,6 +1755,23 @@ TilePalettesGameOver:
     .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
     .byte $02, $03, $02, $01, $03, $01, $03, $01, $03, $03, $03, $03, $03, $03, $03, $03
     .byte $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01, $01
+
+.define TileToNametableAddressTable \
+    $2142, $2144, $2146, $2148, $214A, $214C, $214E, $2150, $2152, $2154, $2156, $2158, $215A, $215C, $0000, $0000, \
+    $2182, $2184, $2186, $2188, $218A, $218C, $218E, $2190, $2192, $2194, $2196, $2198, $219A, $219C, $0000, $0000, \
+    $21C2, $21C4, $21C6, $21C8, $21CA, $21CC, $21CE, $21D0, $21D2, $21D4, $21D6, $21D8, $21DA, $21DC, $0000, $0000, \
+    $2202, $2204, $2206, $2208, $220A, $220C, $220E, $2210, $2212, $2214, $2216, $2218, $221A, $221C, $0000, $0000, \
+    $2242, $2244, $2246, $2248, $224A, $224C, $224E, $2250, $2252, $2254, $2256, $2258, $225A, $225C, $0000, $0000, \
+    $2282, $2284, $2286, $2288, $228A, $228C, $228E, $2290, $2292, $2294, $2296, $2298, $229A, $229C, $0000, $0000, \
+    $22C2, $22C4, $22C6, $22C8, $22CA, $22CC, $22CE, $22D0, $22D2, $22D4, $22D6, $22D8, $22DA, $22DC, $0000, $0000, \
+    $2302, $2304, $2306, $2308, $230A, $230C, $230E, $2310, $2312, $2314, $2316, $2318, $231A, $231C, $0000, $0000, \
+    $2342, $2344, $2346, $2348, $234A, $234C, $234E, $2350, $2352, $2354, $2356, $2358, $235A, $235C, $0000, $0000 \
+
+TileToNametableAddressTableHigh:
+    .hibytes TileToNametableAddressTable
+
+TileToNametableAddressTableLow:
+    .lobytes TileToNametableAddressTable
 
 Palettes:
     ; Background Palette
