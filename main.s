@@ -69,6 +69,7 @@ GAME_WON = 3
                                     ; 1 = update in 2 frames with blanking
     snes_mouse_enabled: .res 1
     currently_shuffling_mines: .res 1
+    tile_stack_begin: .res 1
 
 .bss
     mine_shuffle_space: .res 128
@@ -1407,6 +1408,80 @@ push_grid_tiles_to_stack: ; Clobbers $00, $01, A, X, and Y
     sta minefield_update_current_attribute
     rts
 
+update_tilemap:
+    rts
+
+open_tile: ; Clobbers $00, $01, X, Y, and A
+    ldy #>minefield_row_0
+    sty scratch + 1
+    tsx 
+    stx tile_stack_begin
+    ldy #$00
+    jmp @after_pull
+    @begin:
+    tsx
+    cpx tile_stack_begin
+    bne @after_done_check
+    rts
+    @after_done_check:
+    pla
+    @after_pull:
+    tax
+    cmp #$90
+    bcs @begin
+    and #%00001111
+    cmp #$0E
+    bcs @begin
+    stx scratch
+    lda (scratch), y
+    tax
+    and #(FLAG_MASK | OPENED_MASK)
+    bne @begin
+    txa
+    and #MINE_MASK
+    beq :+
+    lda #GAME_OVER
+    sta game_state
+    txa
+    ora #CLICKED_MINE_MASK
+    jmp :++
+    :
+    txa
+    :
+    ora #OPENED_MASK
+    sta (scratch), y
+    lda scratch
+    jsr update_tilemap
+    txa
+    and #DIGIT_MASK
+    bne @begin
+    lda scratch
+    sec
+    sbc #$11
+    pha
+    clc
+    adc #$01
+    pha
+    clc
+    adc #$01
+    pha
+    clc
+    adc #$0E
+    pha
+    clc
+    adc #$02
+    pha
+    clc
+    adc #$0E
+    pha
+    clc
+    adc #$01
+    pha
+    clc
+    adc #$01
+    pha
+    jmp @after_done_check
+
 nmi:
     pha ; Push registers to stack
     txa
@@ -1498,8 +1573,14 @@ nmi:
     jsr increment_timer
     :
     lda controller_input
-    and #BUTTON_A
-    bne :-
+    and #BUTTON_A ; Check the A button
+    beq :+
+    lda controller_input_prev
+    and #BUTTON_A ; Check that we didn't press the A button on the last frame
+    bne :+
+    lda #$47 ; Open tile
+    jsr open_tile
+    :
 
     lda minefield_update_row
     cmp #$02 ; Push tiles to stack for every row after the first
