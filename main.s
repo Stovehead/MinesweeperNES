@@ -36,7 +36,8 @@ GAME_NOT_STARTED = 0
 GAME_IN_PROGRESS = 1
 GAME_OVER = 2
 GAME_WON = 3
-TILE_UPDATE_BUFFER_SIZE = 8
+TILE_UPDATE_BUFFER_SIZE = 16
+ATTRIBUTE_TABLE_UPPER_BYTE = $23
 
 .zeropage
     scratch: .res $10
@@ -75,12 +76,14 @@ TILE_UPDATE_BUFFER_SIZE = 8
     tile_stack_begin: .res 1
     num_tiles_buffered: .res 1
     tile_update_buffer: .res TILE_UPDATE_BUFFER_SIZE
+    tiles_to_update: .res 1
 
 .bss
     mine_shuffle_space: .res 128
     minefield_tiles: .res 504
+    .res 88 ; Padding to align to nametable attribute addresses
     minefield_attributes: .res 40
-    .res 96 ; Padding to align to the beginning of the page
+    .res 8 ; Padding to align to the beginning of the page
     minefield_row_0: .res 14
     .res 2
     minefield_row_1: .res 14
@@ -1363,6 +1366,13 @@ update_vram:
     beq end_update_vram
     rts
     :
+    ldy tiles_to_update
+    beq :+
+    jsr update_buffered_tiles
+    ldy #$2B ; Load regular cursor sprite
+    jsr update_cursor_sprite
+    jmp end_update_vram
+    :
     ldy #$2B ; Load regular cursor sprite
     jsr update_cursor_sprite
     lda frame_count
@@ -1373,7 +1383,6 @@ update_vram:
     :
     jsr update_mines_display
     :
-    jsr draw_mario
     end_update_vram:
     bit PPUSTATUS ; Set scroll
     lda #$00
@@ -1506,6 +1515,11 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     lda scratch
     jsr buffer_tiles
     txa
+    and #MINE_MASK
+    beq :+
+    jmp @begin
+    :
+    txa
     and #DIGIT_MASK
     bne @begin
     lda scratch
@@ -1535,8 +1549,170 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     push_if_openable
     jmp @begin
 
-update_tilemap:
-    
+push_tile_buffer_to_stack: ; Clobbers $00, $01, $02, $03, $04, A, X, Y
+    ldx #$00
+    lda num_tiles_buffered
+    sta scratch + 4
+    @begin:
+    lda num_tiles_buffered
+    bne :+
+    lda scratch + 4
+    sta tiles_to_update
+    rts
+    :
+    dec num_tiles_buffered
+    ldy num_tiles_buffered
+    lda tile_update_buffer, y
+    sta scratch
+    tay
+    lda TileToNametableAddressTableHigh, y
+    sta $0100, x
+    sta $0104, x
+    inx
+    ldy scratch
+    lda TileToNametableAddressTableLow, y
+    sta $0100, x
+    clc
+    adc #$20
+    sta $0104, x
+    inx
+    ldy scratch
+    lda minefield_row_0, y
+    tay
+    lda game_state
+    cmp #GAME_OVER
+    beq :+
+    lda TileIndices, y
+    jmp :++
+    :
+    lda TileIndicesGameOver, y
+    :
+    sta $0100, x
+    clc
+    adc #$01
+    sta $0101, x
+    adc #$01
+    sta $0104, x
+    adc #$01
+    sta $0105, x
+    inx
+    inx
+    inx
+    inx
+    inx
+    inx
+    ldy scratch
+    lda #ATTRIBUTE_TABLE_UPPER_BYTE
+    sta $0100, x
+    inx
+    lda TileToAttributeAddressTableLow, y
+    sta $0100, x
+    inx
+    tay
+    lda $0500, y ; TODO: Stop this from being hardcoded
+    sta scratch + 1
+    ldy scratch
+    lda minefield_row_0, y
+    tay
+    lda game_state
+    cmp #GAME_OVER
+    beq :+
+    lda TilePalettes, y
+    jmp :++
+    :
+    lda TilePalettesGameOver, y
+    :
+    sta scratch + 2
+    lda #%11111100
+    sta scratch + 3
+    lda scratch
+    and #%00000001 ; On the right
+    bne :+
+    clc
+    asl scratch + 2
+    asl scratch + 2
+    sec
+    rol scratch + 3
+    rol scratch + 3
+    :
+    lda scratch
+    and #%00010000 ; On the bottom
+    bne :+
+    clc
+    lda scratch + 2
+    asl
+    asl
+    asl
+    asl
+    sec
+    sta scratch + 2
+    lda scratch + 3
+    rol
+    rol
+    rol
+    rol
+    sta scratch + 3
+    :
+    lda scratch + 1
+    and scratch + 3
+    ora scratch + 2
+    sta $0100, x
+    inx
+    sta scratch + 1
+    lda #>minefield_attributes
+    sta scratch + 3
+    ldy scratch
+    lda TileToAttributeAddressTableLow, y
+    sta scratch + 2
+    lda scratch + 1
+    ldy #$00
+    sta (scratch + 2), y
+    jmp @begin
+
+update_tilemap: ; Clobbers A
+    lda num_tiles_buffered
+    cmp #(TILE_UPDATE_BUFFER_SIZE + 1)
+    bcs :+
+    jmp push_tile_buffer_to_stack
+    :
+    lda #$00
+    sta num_tiles_buffered
+    rts
+
+update_buffered_tiles:
+    tsx 
+    stx scratch + 9 ; Store stack pointer
+    ldx #$FF ; Move stack
+    txs
+    :
+    pla
+    sta PPUADDR
+    pla
+    sta PPUADDR
+    pla
+    sta PPUDATA
+    pla
+    sta PPUDATA
+    pla
+    sta PPUADDR
+    pla
+    sta PPUADDR
+    pla
+    sta PPUDATA
+    pla
+    sta PPUDATA
+    pla
+    sta PPUADDR
+    pla
+    sta PPUADDR
+    pla
+    sta PPUDATA
+    dey
+    bne :-
+    ldx scratch + 9 ; Restore stack
+    txs
+    lda #$00
+    sta tiles_to_update
     rts
 
 nmi:
@@ -1588,6 +1764,7 @@ nmi:
     cld
     
     jsr update_vram
+    jsr draw_mario
     jsr rand
     lda mouse_display_x
     sta mouse_x
@@ -1643,6 +1820,11 @@ nmi:
     cmp #$02 ; Push tiles to stack for every row after the first
     bcc :+
     jsr push_grid_tiles_to_stack
+    jmp :++
+    :
+    lda num_tiles_buffered
+    beq :+
+    jsr update_tilemap
     :
 
     pla ; Pop registers from stack
@@ -1773,6 +1955,20 @@ TileToNametableAddressTableHigh:
 
 TileToNametableAddressTableLow:
     .lobytes TileToNametableAddressTable
+
+.define TileToAttributeAddressTable \
+    $23D0, $23D1, $23D1, $23D2, $23D2, $23D3, $23D3, $23D4, $23D4, $23D5, $23D5, $23D6, $23D6, $23D7, $0000, $0000, \
+    $23D8, $23D9, $23D9, $23DA, $23DA, $23DB, $23DB, $23DC, $23DC, $23DD, $23DD, $23DE, $23DE, $23DF, $0000, $0000, \
+    $23D8, $23D9, $23D9, $23DA, $23DA, $23DB, $23DB, $23DC, $23DC, $23DD, $23DD, $23DE, $23DE, $23DF, $0000, $0000, \
+    $23E0, $23E1, $23E1, $23E2, $23E2, $23E3, $23E3, $23E4, $23E4, $23E5, $23E5, $23E6, $23E6, $23E7, $0000, $0000, \
+    $23E0, $23E1, $23E1, $23E2, $23E2, $23E3, $23E3, $23E4, $23E4, $23E5, $23E5, $23E6, $23E6, $23E7, $0000, $0000, \
+    $23E8, $23E9, $23E9, $23EA, $23EA, $23EB, $23EB, $23EC, $23EC, $23ED, $23ED, $23EE, $23EE, $23EF, $0000, $0000, \
+    $23E8, $23E9, $23E9, $23EA, $23EA, $23EB, $23EB, $23EC, $23EC, $23ED, $23ED, $23EE, $23EE, $23EF, $0000, $0000, \
+    $2302, $2304, $2306, $2308, $230A, $230C, $230E, $2310, $2312, $2314, $2316, $2318, $231A, $231C, $0000, $0000, \
+    $23F0, $23F1, $23F1, $23F2, $23F2, $23F3, $23F3, $23F4, $23F4, $23F5, $23F5, $23F6, $23F6, $23F7, $0000, $0000
+
+TileToAttributeAddressTableLow:
+    .lobytes TileToAttributeAddressTable
 
 TileIndices:
     .byte $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C, $4C
