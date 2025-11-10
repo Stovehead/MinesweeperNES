@@ -70,7 +70,7 @@ MOUSE_SHIFT_DOWN = 3
                         ; 2 = game over
                         ; 3 = game won
     opened_tiles: .res 1
-    num_flags: .res 1
+    num_flags_left: .res 1
     seconds_elapsed: .res 2
     time_accumulator: .res 3
     timer_digits_buffer: .res 3
@@ -641,9 +641,10 @@ init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
     sty mines_digits_buffer + 1
     ldy #$05
     sty mines_digits_buffer
+    ldy #15
+    sty num_flags_left
     ldy #$00
     sty opened_tiles
-    sty num_flags
     sty seconds_elapsed
     sty time_accumulator
     sty time_accumulator + 1
@@ -1717,6 +1718,99 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     sta scratch
     tax
     lda (scratch), y
+    and #FLAG_MASK ; Check if the one we opened is a flag
+    beq :+
+    rts
+    :
+    lda game_state ; Check if game is not started yet
+    bne :+
+    lda #GAME_IN_PROGRESS ; Start game if it's not started yet
+    sta game_state
+    lda (scratch), y
+    and #MINE_MASK ; Check if the one we opened is a mine
+    bne :++
+    :
+    jmp @after_reshuffle_loop
+    :
+    txa
+    tay
+    @reshuffle_loop:
+    jsr rand ; Reshuffle it if is a mine
+    lda rng_seed
+    and #%00001111
+    cmp #$0E ; Try again if the one we got is out of bounds
+    bcs @reshuffle_loop
+    lda rng_seed
+    cmp #$90 ; Try again if the one we got is out of bounds
+    bcs @reshuffle_loop
+    tax
+    lda minefield_row_0, x
+    and #MINE_MASK ; Try again if the one we got is a mine
+    bne @reshuffle_loop
+    txa ; Add mine to the place we selected
+    sec
+    sbc #$11
+    tax
+    inc minefield_row_0, x
+    inx
+    inc minefield_row_0, x
+    inx
+    inc minefield_row_0, x
+    txa
+    clc
+    adc #$0E
+    tax
+    inc minefield_row_0, x
+    inx
+    lda minefield_row_0, x
+    ora #MINE_MASK
+    sta minefield_row_0, x
+    inx
+    inc minefield_row_0, x
+    txa
+    clc
+    adc #$0E
+    tax
+    inc minefield_row_0, x
+    inx
+    inc minefield_row_0, x
+    inx
+    inc minefield_row_0, x
+
+    lda scratch ; Remove mine from the place we clicked on
+    sec
+    sbc #$11
+    tax
+    dec minefield_row_0, x
+    inx
+    dec minefield_row_0, x
+    inx
+    dec minefield_row_0, x
+    txa
+    clc
+    adc #$0E
+    tax
+    dec minefield_row_0, x
+    inx
+    lda minefield_row_0, x
+    eor #MINE_MASK
+    sta minefield_row_0, x
+    inx
+    dec minefield_row_0, x
+    txa
+    clc
+    adc #$0E
+    tax
+    dec minefield_row_0, x
+    inx
+    dec minefield_row_0, x
+    inx
+    dec minefield_row_0, x
+    tya
+    tax
+    ldy #$00
+    @after_reshuffle_loop:
+    lda (scratch), y
     ora #OPENED_MASK
     sta (scratch), y
     txa
@@ -2269,7 +2363,7 @@ handle_reset_button:
     lda #MOUSE_DOWN_ON_BUTTON
     sta mouse_state
     :
-    jmp :++
+    rts
     :
     lda reset_button_down
     beq :+
@@ -2280,7 +2374,40 @@ handle_reset_button:
     :
     rts
 
-handle_mouse:
+update_mines_count: ; Clobbers A, X, and Y
+    ldx num_flags_left
+    bpl :+
+    txa
+    eor #$FF
+    tax
+    inx
+    lda #$0A
+    jmp :++
+    :
+    lda #$00
+    :
+    sta mines_digits_buffer + 2
+    txa
+    cmp #99
+    bcc :+
+    lda #$09
+    sta mines_digits_buffer
+    sta mines_digits_buffer + 1
+    rts
+    :
+    ldy #$00
+    @subtraction_loop:
+    cmp #10
+    bcc @after_subtraction_loop
+    sbc #10
+    iny
+    jmp @subtraction_loop
+    @after_subtraction_loop:
+    sty mines_digits_buffer + 1
+    sta mines_digits_buffer
+    rts
+
+handle_mouse: ; Clobbers A and Y
     lda mouse_state
     cmp #MOUSE_DOWN
     bcs @after_reset_button_handle ; Skip doing reset button stuff if we already have the mouse down
@@ -2316,6 +2443,11 @@ handle_mouse:
     :
     rts
     :
+    lda game_state
+    cmp #GAME_OVER ; Don't open tiles if game over or won
+    bcc :+
+    rts
+    :
     lda mouse_buttons
     and #MOUSE_LEFT_CLICK
     beq :++
@@ -2336,6 +2468,48 @@ handle_mouse:
     lda #MOUSE_UP
     sta mouse_state
     :
+    lda mouse_buttons_pressed
+    and #MOUSE_RIGHT_CLICK ; Check to set flag
+    beq @after_flag_stuff
+    lda mouse_down_x
+    cmp #$0E
+    bcs @after_flag_stuff
+    lda mouse_down_y
+    cmp #$09
+    bcs @after_flag_stuff
+    ; clc ; Carry should be set
+    ; lda mouse_down_y ; Already loaded
+    asl
+    asl
+    asl
+    asl
+    ora mouse_down_x
+    tay
+    lda minefield_row_0, y
+    and #OPENED_MASK
+    beq :+
+    rts
+    :
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc num_flags_left
+    jmp :++
+    :
+    dec num_flags_left
+    :
+    lda minefield_row_0, y
+    eor #FLAG_MASK
+    sta minefield_row_0, y
+    tya
+    ldy num_tiles_buffered
+    sta tile_update_buffer, y
+    jsr update_mines_count
+    inc num_tiles_buffered
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    rts
+    @after_flag_stuff:
     lda mouse_buttons_released
     and #MOUSE_LEFT_CLICK ; Check the if we released click
     beq :+
@@ -2448,24 +2622,23 @@ nmi:
     jsr increment_timer
     :
     
+    lda minefield_update_row
+    bne :+
+    jsr handle_mouse ; Don't handle mouse if we have to update the screen
+    :
 
     lda minefield_update_row
     cmp #$02 ; Push tiles to stack for every row after the first
     bcc :+
     jsr push_grid_tiles_to_stack
-    jmp :+++
+    jmp :++
     :
     lda ready_to_push_tiles_to_stack
     beq :+
     jsr update_tilemap
-    jmp :++
     :
-    jsr handle_mouse
-    :
-    lda num_tiles_buffered
-    bne :+
+
     jsr draw_mario
-    :
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
@@ -2514,7 +2687,7 @@ Digit9:
 
 DigitMinus:
     .byte $01, $07, $18, $0C
-    .byte $80, $08, $0B, $81
+    .byte $84, $08, $0B, $85
 
 .define DigitTable Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9, DigitMinus
 
