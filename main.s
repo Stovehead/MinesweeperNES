@@ -22,6 +22,9 @@ BUTTON_UP =     %00001000
 BUTTON_DOWN =   %00000100
 BUTTON_LEFT =   %00000010
 BUTTON_RIGHT =  %00000001
+MOUSE_LEFT_CLICK = %00000001
+MOUSE_RIGHT_CLICK =  %00000010
+MOUSE_SHIFT = BUTTON_SELECT
 NUM_MINES = 15
 GRID_WIDTH = 14
 GRID_HEIGHT = 9
@@ -38,15 +41,22 @@ GAME_OVER = 2
 GAME_WON = 3
 TILE_UPDATE_BUFFER_SIZE = 16
 ATTRIBUTE_TABLE_UPPER_BYTE = $23
+MOUSE_UP = 0
+MOUSE_DOWN_ON_BUTTON = 1
+MOUSE_DOWN = 2
+MOUSE_SHIFT_DOWN = 3
+
 
 .zeropage
     scratch: .res $10
     frame_count: .res 1
     controller_input_prev: .res 1
     controller_input: .res 1
-    mouse_state_prev: .res 1
+    mouse_buttons_prev: .res 1
+    mouse_buttons: .res 1
+    mouse_buttons_pressed: .res 1
+    mouse_buttons_released: .res 1
     mouse_state: .res 1
-    mouse_flags: .res 1
     mouse_display_x: .res 1
     mouse_display_y: .res 1
     mouse_delta_x: .res 1
@@ -77,6 +87,9 @@ ATTRIBUTE_TABLE_UPPER_BYTE = $23
     num_tiles_buffered: .res 1
     tile_update_buffer: .res TILE_UPDATE_BUFFER_SIZE
     tiles_to_update: .res 1
+    ready_to_push_tiles_to_stack: .res 1
+    reset_button_down: .res 1
+    reset_button_update: .res 1
 
 .bss
     mine_shuffle_space: .res 128
@@ -941,10 +954,81 @@ draw_digit: ; Y register is digit to draw, - is $0A
     bne :-
     rts
 
-draw_mario: ; Clobbers X
-    ; Todo: Actual logic to figure out which expression to use
-    ; Store index in X register
-    ldx #$09
+draw_mario: ; Clobbers X and A
+    lda reset_button_update
+    beq :+
+    lda minefield_update_row
+    beq :+
+    rts ; Skip updating Mario if the button has yet to be updated
+    :
+    lda reset_button_down ; If the reset button is down, shift the position
+    beq :+
+    lda #24    ; Set Y position
+    sta OAMBUFFER + (4 * 2)
+    sta OAMBUFFER + (4 * 4)
+    sta OAMBUFFER + (4 * 6)
+    sta OAMBUFFER + (4 * 8)
+    lda #40    
+    sta OAMBUFFER + (4 * 3)
+    sta OAMBUFFER + (4 * 5)
+    sta OAMBUFFER + (4 * 7)
+    sta OAMBUFFER + (4 * 9)
+    lda #113 ; Set X position
+    sta OAMBUFFER + (4 * 2) + 3
+    sta OAMBUFFER + (4 * 3) + 3
+    lda #121
+    sta OAMBUFFER + (4 * 4) + 3
+    sta OAMBUFFER + (4 * 5) + 3
+    lda #129
+    sta OAMBUFFER + (4 * 6) + 3
+    sta OAMBUFFER + (4 * 7) + 3
+    lda #137
+    sta OAMBUFFER + (4 * 8) + 3
+    sta OAMBUFFER + (4 * 9) + 3
+    ldx #$09 ; Normal face
+    jmp @set_tile_ids
+    :
+    lda #23    ; Set Y position
+    sta OAMBUFFER + (4 * 2)
+    sta OAMBUFFER + (4 * 4)
+    sta OAMBUFFER + (4 * 6)
+    sta OAMBUFFER + (4 * 8)
+    lda #39    
+    sta OAMBUFFER + (4 * 3)
+    sta OAMBUFFER + (4 * 5)
+    sta OAMBUFFER + (4 * 7)
+    sta OAMBUFFER + (4 * 9)
+    lda #112 ; Set X position
+    sta OAMBUFFER + (4 * 2) + 3
+    sta OAMBUFFER + (4 * 3) + 3
+    lda #120
+    sta OAMBUFFER + (4 * 4) + 3
+    sta OAMBUFFER + (4 * 5) + 3
+    lda #128
+    sta OAMBUFFER + (4 * 6) + 3
+    sta OAMBUFFER + (4 * 7) + 3
+    lda #136
+    sta OAMBUFFER + (4 * 8) + 3
+    sta OAMBUFFER + (4 * 9) + 3
+    lda game_state
+    cmp #GAME_OVER
+    bne :+
+    ldx #$19 ; Game over face
+    jmp @set_tile_ids
+    :
+    cmp #GAME_WON
+    bne :+
+    ldx #$21 ; Victory face
+    jmp @set_tile_ids
+    :
+    lda mouse_state
+    cmp #MOUSE_DOWN
+    bcc :+
+    ldx #$11 ; Mamma mia face
+    jmp @set_tile_ids
+    :
+    ldx #$09 ; Normal face
+    @set_tile_ids:
     stx OAMBUFFER + (4 * 4) + 1
     inx
     inx
@@ -988,14 +1072,53 @@ controller_to_mouse_buttons:
     lda #$00
     after_up_down:
     sta mouse_delta_y
-
+    
+    txa
+    bne @end ; Skip updating controller inputs on lag frames
     lda controller_input
-    and #%00000111 ; Mask out all but A, B, and select
-    sta mouse_state
+    and #BUTTON_A
+    beq :+
+    lda #MOUSE_LEFT_CLICK
+    jmp :++
+    :
+    lda #%00000000
+    :
+    sta mouse_buttons
+    lda controller_input
+    and #BUTTON_B
+    beq :+
+    lda mouse_buttons
+    ora #MOUSE_RIGHT_CLICK
+    jmp :++
+    :
+    lda mouse_buttons
+    :
+    sta mouse_buttons
+    lda controller_input
+    and #BUTTON_SELECT
+    beq :+
+    lda mouse_buttons
+    ora #MOUSE_SHIFT
+    jmp :++
+    :
+    lda mouse_buttons
+    :
+    sta mouse_buttons
+
+    lda mouse_buttons_prev 
+    eor #$FF
+    and mouse_buttons
+    sta mouse_buttons_pressed
+
+    lda mouse_buttons
+    eor #$FF
+    and mouse_buttons_prev
+    sta mouse_buttons_released
+    @end:
     rts
 
-read_controllers: ; Clobbers $0A, A, and Y
-
+read_controllers:   ; Clobbers $0A, A, and Y
+                    ; X != 0 means lag frame
     lda #$01
     sta JOY1
     lda controller_input
@@ -1009,10 +1132,12 @@ read_controllers: ; Clobbers $0A, A, and Y
     lda #$00
     sta JOY1
 
+    txa
+    bne after_read_port_1 ; Skip updating controller inputs on lag frames
     lda controller_input
     sta controller_input_prev
-    lda mouse_state
-    sta mouse_state_prev
+    lda mouse_buttons
+    sta mouse_buttons_prev
     lda #$01
     sta controller_input
 
@@ -1021,6 +1146,8 @@ read_controllers: ; Clobbers $0A, A, and Y
     lsr
     rol controller_input
     bcc read_loop
+    
+    after_read_port_1:
 
     lda snes_mouse_enabled ; Check if there is a mouse
     bne :+
@@ -1059,17 +1186,32 @@ read_controllers: ; Clobbers $0A, A, and Y
     jmp controller_to_mouse_buttons
     :
 
+    lda minefield_update_row
+    bne :+ ; Skip updating mouse stuff if we're updating the screen
+    txa
+    bne :++ ; Skip updating mouse stuff on lag frames
     lda controller_input
     and #BUTTON_SELECT ; Get the select (shift) button
-    sta mouse_state
+    sta mouse_buttons
 
     lda scratch + $A ; Get the mouse buttons
     .repeat 6 ; Get last two bits
     lsr
     .endrepeat
     
-    ora mouse_state
-    sta mouse_state
+    ora mouse_buttons
+    sta mouse_buttons
+    :
+    lda mouse_buttons_prev ; This stuff is fine to update when updating the screen
+    eor #$FF
+    and mouse_buttons
+    sta mouse_buttons_pressed
+
+    lda mouse_buttons
+    eor #$FF
+    and mouse_buttons_prev
+    sta mouse_buttons_released
+    :
 
     lda #$01
     sta scratch + $A
@@ -1301,7 +1443,7 @@ update_minefield:   ; Current row in X
     sta minefield_update_current_attribute
     inc minefield_update_row
 
-    ldy #$2D ; Load hourglass for cursor sprite
+    ldy #$2B ; Load normal cursor sprite
     jsr update_cursor_sprite
     rts
 
@@ -1345,15 +1487,105 @@ grid_pop_slide:
     sta minefield_update_current_tile + 1
     lda #<minefield_attributes
     sta minefield_update_current_attribute
-    ldy #$2B ; Load normal cursor sprite
-    jmp :++
-    :
-    ldy #$2D ; Load hourglass for cursor sprite
     :
     ldx scratch + 9 ; Restore stack
     txs
+    ldy #$2B ; Load normal cursor sprite
     jsr update_cursor_sprite
     rts
+
+update_reset_button_up:
+    ldx #$20
+    stx PPUADDR
+    lda #$8E
+    sta PPUADDR
+    lda #$2D
+    sta PPUDATA
+    lda #$2E
+    sta PPUDATA
+    sta PPUDATA
+    lda #$2F
+    sta PPUDATA
+    stx PPUADDR
+    lda #$AE
+    sta PPUADDR
+    lda #$33
+    sta PPUDATA
+    lda #$2C
+    sta PPUDATA
+    sta PPUDATA
+    lda #$34
+    sta PPUDATA
+    stx PPUADDR
+    lda #$CE
+    sta PPUADDR
+    lda #$33
+    sta PPUDATA
+    lda #$2C
+    sta PPUDATA
+    sta PPUDATA
+    lda #$34
+    sta PPUDATA
+    stx PPUADDR
+    lda #$EE
+    sta PPUADDR
+    lda #$35
+    sta PPUDATA
+    lda #$36
+    sta PPUDATA
+    sta PPUDATA
+    lda #$37
+    sta PPUDATA
+    rts
+
+update_reset_button_down:
+    ldx #$20
+    stx PPUADDR
+    lda #$8E
+    sta PPUADDR
+    lda #$38
+    sta PPUDATA
+    lda #$39
+    sta PPUDATA
+    sta PPUDATA
+    sta PPUDATA
+    stx PPUADDR
+    lda #$AE
+    sta PPUADDR
+    lda #$3A
+    sta PPUDATA
+    lda #$2C
+    sta PPUDATA
+    sta PPUDATA
+    sta PPUDATA
+    stx PPUADDR
+    lda #$CE
+    sta PPUADDR
+    lda #$3A
+    sta PPUDATA
+    lda #$2C
+    sta PPUDATA
+    sta PPUDATA
+    sta PPUDATA
+    stx PPUADDR
+    lda #$EE
+    sta PPUADDR
+    lda #$3A
+    sta PPUDATA
+    lda #$2C
+    sta PPUDATA
+    sta PPUDATA
+    sta PPUDATA
+    rts
+
+update_reset_button:
+    lda #$00
+    sta reset_button_update
+    lda reset_button_down
+    beq :+
+    jmp update_reset_button_down
+    :
+    jmp update_reset_button_up
 
 update_vram:
     lda #$02 ; Push sprites to OAM
@@ -1375,6 +1607,10 @@ update_vram:
     :
     ldy #$2B ; Load regular cursor sprite
     jsr update_cursor_sprite
+    lda reset_button_update
+    beq :+
+    jsr update_reset_button
+    :
     lda frame_count
     and #$01 ; Update timer and mines on alternating frames
     bne :+
@@ -1392,6 +1628,7 @@ update_vram:
     rts
 
 push_grid_tiles_to_stack: ; Clobbers $00, $01, A, X, and Y
+    jsr update_other_row_attributes
     ldx minefield_update_row ; Load pointer to row in nametable
     lda MinefieldRowTileStartHigh, x 
     sta $0100
@@ -1488,6 +1725,14 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     tsx
     cpx tile_stack_begin
     bne @after_done_check
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    lda opened_tiles
+    cmp #(GRID_HEIGHT * GRID_WIDTH - NUM_MINES)
+    bcc :+
+    lda #GAME_WON
+    sta game_state
+    :
     rts
     @after_done_check:
     pla
@@ -1555,9 +1800,17 @@ push_tile_buffer_to_stack: ; Clobbers $00, $01, $02, $03, $04, A, X, Y
     sta scratch + 4
     @begin:
     lda num_tiles_buffered
-    bne :+
+    bne :++
     lda scratch + 4
     sta tiles_to_update
+    lda game_state
+    cmp #GAME_OVER
+    bne :+
+    lda #(TILE_UPDATE_BUFFER_SIZE + 1)
+    sta num_tiles_buffered ; If game over, update the whole screen next
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    :
     rts
     :
     dec num_tiles_buffered
@@ -1675,7 +1928,274 @@ push_tile_buffer_to_stack: ; Clobbers $00, $01, $02, $03, $04, A, X, Y
     sta (scratch + 2), y
     jmp @begin
 
-update_tilemap: ; Clobbers A
+update_first_row_attributes: ; Clobbers A and X
+    ldx minefield_row_0
+    lda TilePalettes, x
+    and #%11000000
+    ora #%00101010
+    sta minefield_attributes
+    .repeat 6, i
+    ldx minefield_row_0 + (i * 2) + 1
+    lda TilePalettes, x
+    and #%00110000
+    ora #%00001010
+    sta scratch + 4
+    ldx minefield_row_0 + (i * 2) + 2
+    lda TilePalettes, x
+    and #%11000000
+    ora scratch + 4
+    sta minefield_attributes + i + 1
+    .endrepeat
+    ldx minefield_row_0 + 13
+    lda TilePalettes, x
+    and #%00110000
+    ora #%10001010
+    sta minefield_attributes + 7
+    lda #$01 
+    sta minefield_update_row ; We're ready to update the screen
+    rts
+
+update_other_row_attributes: ; Clobbers $00, $01, $02, $03, X, Y, and A
+    lda game_state
+    cmp #GAME_OVER
+    beq :+
+    lda #<TilePalettes
+    sta scratch
+    lda #>TilePalettes
+    sta scratch + 1
+    jmp :++
+    :
+    lda #<TilePalettesGameOver
+    sta scratch
+    lda #>TilePalettesGameOver
+    sta scratch + 1
+    :
+    clc
+    lda minefield_update_row
+    asl
+    asl
+    sta scratch + 3
+    lda #$00
+    ldx minefield_update_row
+    dex
+    clc
+    :
+    adc #$10
+    dex
+    bne :-
+    tax
+    ldy minefield_row_0, x
+    lda (scratch), y
+    and #%00001100
+    sta scratch + 2
+    ldy minefield_row_1, x
+    lda (scratch), y
+    and #%11000000
+    ora scratch + 2
+    ora #%00100010
+    ldy scratch + 3
+    sta minefield_attributes, y 
+    inc scratch + 3
+    inx
+    :
+    ldy minefield_row_0, x
+    lda (scratch), y
+    and #%00000011
+    sta scratch + 2
+    ldy minefield_row_1, x
+    lda (scratch), y 
+    and #%00110000
+    ora scratch + 2
+    sta scratch + 2
+    inx
+    ldy minefield_row_0, x
+    lda (scratch), y
+    and #%00001100
+    ora scratch + 2
+    sta scratch + 2
+    ldy minefield_row_1, x
+    lda (scratch), y 
+    and #%11000000
+    ora scratch + 2
+    sta scratch + 2
+    inx
+    ldy scratch + 3
+    sta minefield_attributes, y 
+    inc scratch + 3
+    txa
+    and #%00001111
+    cmp #$0d
+    bcc :-
+    ldy minefield_row_0, x
+    lda (scratch), y
+    and #%00000011
+    sta scratch + 2
+    ldy minefield_row_1, x
+    lda (scratch), y
+    and #%00110000
+    ora scratch + 2
+    ora #%10001000
+    ldy scratch + 3
+    sta minefield_attributes, y 
+    inc scratch + 3
+    rts
+
+update_minefield_tiles: ; Clobbers $00, $01, $02, $03, $04, A, X, and Y
+    lda #<minefield_tiles ; Load address for top row
+    sta scratch
+    clc
+    adc #27 ; Subtract one so we can avoid a dey
+    sta scratch + 2 ; Address for bottom row goes in $02
+    lda #>minefield_tiles ; High byte should be the same for both
+    sta scratch + 1
+    sta scratch + 3
+    ldx #$FE ; To account for the two inxs ahead
+    ldy #$00 ; Y is the current tile on the tilemap
+    clc
+    @start_loop:
+    inx ; Skip over the two unused squares
+    inx
+    @start_loop_after_inx:
+    sty scratch + 4
+    ldy minefield_row_0, x ; Get the current square
+    lda TileIndices, y ; Load the ID of the top left corner
+    ldy scratch + 4
+    sta (scratch), y ; Store top left corner
+    adc #$01 ; Carry should be clear here
+    iny
+    sta (scratch), y ; Store top right corner
+    adc #$01 
+    sta (scratch + 2), y ; Store bottom left corner
+    adc #$01
+    iny
+    sta (scratch + 2), y ; Store bottom rigiht corner
+    inx
+    stx scratch + 4
+    txa
+    and #%00001111 
+    cmp #$0E ; Check if we've reached the end (don't want to process the two unused squares)
+    ldx scratch + 4
+    bcc @start_loop_after_inx
+    ldy #$00
+    lda scratch
+    adc #55 ; Carry set here
+    sta scratch
+    lda scratch + 1
+    adc #$00
+    sta scratch + 1
+    cmp #$05 ; Check if we've reached the end, high byte
+    bne :+
+    lda scratch
+    cmp #$78 ; Check if we've reached the end, low byte
+    bne :+
+    ; Now it's over but we have no time!!!
+    ; It's hacky, but update the first row's attributes manually to save time
+    ; We can do the other ones later
+    jmp update_first_row_attributes
+    :
+    clc
+    lda scratch + 2
+    adc #56
+    sta scratch + 2
+    lda scratch + 3
+    adc #$00
+    sta scratch + 3
+    jmp @start_loop
+
+update_first_row_attributes_game_over:
+    ldx minefield_row_0
+    lda TilePalettesGameOver, x
+    and #%11000000
+    ora #%00101010
+    sta minefield_attributes
+    .repeat 6, i
+    ldx minefield_row_0 + (i * 2) + 1
+    lda TilePalettesGameOver, x
+    and #%00110000
+    ora #%00001010
+    sta scratch + 4
+    ldx minefield_row_0 + (i * 2) + 2
+    lda TilePalettesGameOver, x
+    and #%11000000
+    ora scratch + 4
+    sta minefield_attributes + i + 1
+    .endrepeat
+    ldx minefield_row_0 + 13
+    lda TilePalettesGameOver, x
+    and #%00110000
+    ora #%10001010
+    sta minefield_attributes + 7
+    lda #$01 
+    sta minefield_update_row ; We're ready to update the screen
+    rts
+
+update_minefield_tiles_game_over: ; Clobbers $00, $01, $02, $03, $04, A, X, and Y
+    lda #$00
+    sta num_tiles_buffered
+    lda #<minefield_tiles ; Load address for top row
+    sta scratch
+    clc
+    adc #27 ; Subtract one so we can avoid a dey
+    sta scratch + 2 ; Address for bottom row goes in $02
+    lda #>minefield_tiles ; High byte should be the same for both
+    sta scratch + 1
+    sta scratch + 3
+    ldx #$FE ; To account for the two inxs ahead
+    ldy #$00 ; Y is the current tile on the tilemap
+    clc
+    @start_loop:
+    inx ; Skip over the two unused squares
+    inx
+    @start_loop_after_inx:
+    sty scratch + 4
+    ldy minefield_row_0, x ; Get the current square
+    lda TileIndicesGameOver, y ; Load the ID of the top left corner
+    ldy scratch + 4
+    sta (scratch), y ; Store top left corner
+    adc #$01 ; Carry should be clear here
+    iny
+    sta (scratch), y ; Store top right corner
+    adc #$01 
+    sta (scratch + 2), y ; Store bottom left corner
+    adc #$01
+    iny
+    sta (scratch + 2), y ; Store bottom rigiht corner
+    inx
+    stx scratch + 4
+    txa
+    and #%00001111 
+    cmp #$0E ; Check if we've reached the end (don't want to process the two unused squares)
+    ldx scratch + 4
+    bcc @start_loop_after_inx
+    ldy #$00
+    lda scratch
+    adc #55 ; Carry set here
+    sta scratch
+    lda scratch + 1
+    adc #$00
+    sta scratch + 1
+    cmp #$05 ; Check if we've reached the end, high byte
+    bne :+
+    lda scratch
+    cmp #$78 ; Check if we've reached the end, low byte
+    bne :+
+    ; Now it's over but we have no time!!!
+    ; It's hacky, but update the first row's attributes manually to save time
+    ; We can do the other ones later
+    jmp update_first_row_attributes_game_over
+    :
+    clc
+    lda scratch + 2
+    adc #56
+    sta scratch + 2
+    lda scratch + 3
+    adc #$00
+    sta scratch + 3
+    jmp @start_loop
+
+update_tilemap: ; Clobbers $00, $01, $02, $03, $04, A, X, and Y
+    lda #$00
+    sta ready_to_push_tiles_to_stack
     lda num_tiles_buffered
     cmp #(TILE_UPDATE_BUFFER_SIZE + 1)
     bcs :+
@@ -1683,7 +2203,12 @@ update_tilemap: ; Clobbers A
     :
     lda #$00
     sta num_tiles_buffered
-    rts
+    lda game_state
+    cmp #GAME_OVER
+    beq :+
+    jmp update_minefield_tiles
+    :
+    jmp update_minefield_tiles_game_over
 
 update_buffered_tiles:
     tsx 
@@ -1721,6 +2246,116 @@ update_buffered_tiles:
     sta tiles_to_update
     rts
 
+handle_reset_button:
+    lda mouse_buttons_released
+    and #MOUSE_LEFT_CLICK
+    beq :+
+    jsr init_minefield
+    lda #GAME_NOT_STARTED
+    sta game_state
+    lda #$01
+    sta minefield_update_row
+    lda #MOUSE_UP
+    sta mouse_state
+    :
+    lda mouse_buttons
+    and #MOUSE_LEFT_CLICK
+    beq :++
+    lda reset_button_down
+    bne :+
+    lda #$01
+    sta reset_button_down
+    sta reset_button_update
+    lda #MOUSE_DOWN_ON_BUTTON
+    sta mouse_state
+    :
+    jmp :++
+    :
+    lda reset_button_down
+    beq :+
+    lda #$00
+    sta reset_button_down
+    lda #$01
+    sta reset_button_update
+    :
+    rts
+
+handle_mouse:
+    lda mouse_state
+    cmp #MOUSE_DOWN
+    bcs @after_reset_button_handle ; Skip doing reset button stuff if we already have the mouse down
+    lda mouse_x
+    cmp #111
+    bcc :+
+    cmp #145
+    bcs :+
+    lda mouse_y
+    cmp #15
+    bcc :+
+    cmp #49
+    bcs :+
+    jmp handle_reset_button
+    :
+    lda reset_button_down
+    beq :+
+    lda #$00
+    sta reset_button_down
+    lda #$01
+    sta reset_button_update 
+    rts
+    :
+    @after_reset_button_handle:
+    lda mouse_state
+    cmp #MOUSE_DOWN_ON_BUTTON
+    bne :++
+    lda mouse_buttons
+    and #MOUSE_LEFT_CLICK
+    bne :+
+    lda #MOUSE_UP
+    sta mouse_state
+    :
+    rts
+    :
+    lda mouse_buttons
+    and #MOUSE_LEFT_CLICK
+    beq :++
+    lda mouse_buttons
+    and #MOUSE_SHIFT
+    beq :+
+    lda #MOUSE_SHIFT_DOWN
+    sta mouse_state
+    rts
+    :
+    lda #MOUSE_DOWN
+    sta mouse_state
+    rts
+    :
+    lda mouse_buttons
+    and #MOUSE_LEFT_CLICK
+    bne :+
+    lda #MOUSE_UP
+    sta mouse_state
+    :
+    lda mouse_buttons_released
+    and #MOUSE_LEFT_CLICK ; Check the if we released click
+    beq :+
+    lda mouse_down_x
+    cmp #$0E
+    bcs :+
+    lda mouse_down_y
+    cmp #$09
+    bcs :+
+    ; clc ; Carry should be set
+    ; lda mouse_down_y ; Already loaded
+    asl
+    asl
+    asl
+    asl
+    ora mouse_down_x
+    jsr open_tile
+    :
+    rts
+
 nmi:
     pha ; Push registers to stack
     txa
@@ -1739,6 +2374,7 @@ nmi:
     bne after_early_exit
     ldy #$2D ; Load hourglass for cursor sprite
     jsr update_cursor_sprite
+    ldx #$01
     jsr read_controllers
     jsr update_mouse_position
     lda game_state
@@ -1770,7 +2406,6 @@ nmi:
     cld
     
     jsr update_vram
-    jsr draw_mario
     jsr rand
     lda mouse_display_x
     sta mouse_x
@@ -1791,7 +2426,7 @@ nmi:
     sec
     sbc #(GRID_Y / 2)
     sta mouse_down_y
-
+    ldx #$00
     jsr read_controllers
     jsr update_mouse_position
     lda game_state ; Check current game state
@@ -1812,27 +2447,25 @@ nmi:
     bne :+ ; Skip incrementing timer unless the game is started
     jsr increment_timer
     :
-    lda controller_input
-    and #BUTTON_A ; Check the A button
-    beq :+
-    lda controller_input_prev
-    and #BUTTON_A ; Check that we didn't press the A button on the last frame
-    bne :+
-    lda #$47 ; Open tile
-    jsr open_tile
-    :
+    
 
     lda minefield_update_row
     cmp #$02 ; Push tiles to stack for every row after the first
     bcc :+
     jsr push_grid_tiles_to_stack
-    jmp :++
+    jmp :+++
     :
-    lda num_tiles_buffered
+    lda ready_to_push_tiles_to_stack
     beq :+
     jsr update_tilemap
+    jmp :++
     :
-
+    jsr handle_mouse
+    :
+    lda num_tiles_buffered
+    bne :+
+    jsr draw_mario
+    :
     pla ; Pop registers from stack
     pla ; Probably not necessary to restore the registers?
     pla
