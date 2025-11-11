@@ -435,6 +435,7 @@ load_nametable:
 
     lda #$80 ; Move mouse to center of screen
     sta mouse_display_x
+    lda #$40 
     sta mouse_display_y
 
     lda #$01 ; Init RNG
@@ -1232,6 +1233,8 @@ read_controllers:   ; Clobbers $0A, A, and Y
     adc #$00
     :
     sta mouse_delta_y
+    adc rng_seed ; For extra randomness
+    sta rng_seed
 
     lda #$01
     sta scratch + $A
@@ -1250,6 +1253,8 @@ read_controllers:   ; Clobbers $0A, A, and Y
     adc #$00
     :
     sta mouse_delta_x
+    adc rng_seed + 1
+    sta rng_seed + 1
 
     rts
 
@@ -1369,6 +1374,14 @@ update_minefield_blank:
 
 update_minefield:   ; Current row in X
                     ; Clobbers $00, $01, $09, A, and Y
+    lda game_state
+    cmp #GAME_WON
+    bne :+
+    lda #$00
+    sta mines_digits_buffer
+    sta mines_digits_buffer + 1
+    sta mines_digits_buffer + 2
+    :
     lda screen_update_setting
     beq begin_update_minefield
     jmp update_minefield_blank
@@ -1720,7 +1733,7 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     sta scratch
     tax
     lda (scratch), y
-    and #FLAG_MASK ; Check if the one we opened is a flag
+    and #(FLAG_MASK | OPENED_MASK) ; Check if the one we opened is a flag or open
     beq :+
     rts
     :
@@ -1823,9 +1836,21 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     bne @after_done_check
     lda opened_tiles
     cmp #(GRID_HEIGHT * GRID_WIDTH - NUM_MINES)
-    bcc :+
+    bcc :++
     lda #GAME_WON
     sta game_state
+    ldy #$00
+    @loop_begin: ; Mark all mines with flags 
+    lda minefield_row_0, y 
+    and #MINE_MASK
+    beq :+
+    lda minefield_row_0, y 
+    ora #FLAG_MASK
+    sta minefield_row_0, y
+    :
+    iny
+    cpy #$8E
+    bcc @loop_begin
     :
     rts
     @after_done_check:
@@ -2338,6 +2363,18 @@ update_buffered_tiles:
     txs
     lda #$00
     sta tiles_to_update
+    lda game_state
+    cmp #GAME_WON
+    bne :+
+    lda #(TILE_UPDATE_BUFFER_SIZE + 1)
+    sta num_tiles_buffered ; Force screen update
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    lda #$00
+    sta mines_digits_buffer
+    sta mines_digits_buffer + 1
+    sta mines_digits_buffer + 2
+    :
     rts
 
 handle_reset_button:
@@ -2546,7 +2583,7 @@ handle_tile_masks: ; Clobbers $00, $01, $02, A
     :
     ldy mouse_down_address
     lda minefield_row_0, y
-    and #OPENED_MASK
+    and #(OPENED_MASK | FLAG_MASK)
     bne @hide_all
     lda mouse_x
     and #%11110000
@@ -2616,6 +2653,13 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     cmp #GAME_OVER ; Don't open tiles if game over or won
     bcc :+
     rts
+    :
+    cmp #GAME_NOT_STARTED
+    bne :+
+    lda mouse_buttons_pressed
+    and #MOUSE_LEFT_CLICK
+    beq :+
+    jsr init_minefield ; Init minefield when game hasn't started and you click
     :
     lda mouse_buttons
     and #MOUSE_LEFT_CLICK
@@ -2694,6 +2738,9 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     jmp @end_method
     @open_shift_click:
     ldy mouse_down_address
+    lda minefield_row_0, y
+    and #OPENED_MASK ; Check if this opened
+    beq :-
     lda minefield_row_0, y
     and #%00001111 ; Check if this actually has a number
     beq :-
@@ -2792,6 +2839,7 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     jsr open_tile
     :
     inc scratch + 4
+    lda scratch + 4
     cmp #$90
     bcs :+
     and #%00001111
@@ -2823,6 +2871,7 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     jsr open_tile
     :
     inc scratch + 4
+    lda scratch + 4
     cmp #$90
     bcs :+
     and #%00001111
@@ -2854,6 +2903,7 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     jsr open_tile
     :
     inc scratch + 4
+    lda scratch + 4
     cmp #$90
     bcs :+
     and #%00001111
@@ -2861,10 +2911,13 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     bcs :+
     lda scratch + 4
     jsr open_tile
+    :
+    @end_method:
+    lda num_tiles_buffered
+    beq :+
     lda #$01
     sta ready_to_push_tiles_to_stack
     :
-    @end_method:
     rts
 
 nmi:
