@@ -2716,18 +2716,32 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     :
     lda mouse_buttons
     and #MOUSE_LEFT_CLICK
-    beq :++
+    beq @mouse_not_clicked
+    lda snes_mouse_enabled
+    bne :+
+    lda mouse_down_x
+    cmp #$0E
+    bcs :+
+    lda mouse_down_y
+    cmp #$09
+    bcs :+
+    ldy mouse_down_address
+    lda minefield_row_0, y
+    and #OPENED_MASK
+    bne @enable_shift_down
+    :
     lda mouse_buttons
     and #MOUSE_SHIFT
-    beq :+
+    beq @disable_shift_down
+    @enable_shift_down:
     lda #MOUSE_SHIFT_DOWN
     sta mouse_state
     rts
-    :
+    @disable_shift_down:
     lda #MOUSE_DOWN
     sta mouse_state
     rts
-    :
+    @mouse_not_clicked:
     lda mouse_buttons
     and #MOUSE_LEFT_CLICK
     bne :+
@@ -2772,10 +2786,23 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     @after_flag_stuff:
     lda mouse_buttons_released
     and #MOUSE_LEFT_CLICK ; Check the if we released click
-    beq :+
+    beq :++
     lda mouse_buttons
     and #MOUSE_SHIFT
     bne @open_shift_click
+    lda snes_mouse_enabled
+    bne :+
+    lda mouse_down_x
+    cmp #$0E
+    bcs :+
+    lda mouse_down_y
+    cmp #$09
+    bcs :+
+    ldy mouse_down_address
+    lda minefield_row_0, y
+    and #OPENED_MASK
+    bne @open_shift_click
+    :
     lda mouse_down_x
     cmp #$0E
     bcs :+
