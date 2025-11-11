@@ -528,6 +528,8 @@ after_check_mouse:
     lda #%10100000	; Enable NMI and set sprite size
     sta PPUCTRL
 
+    jsr init_minefield
+
     sed ; Decimal flag used to see if frame finished
 forever:
     jmp forever
