@@ -1360,19 +1360,25 @@ update_minefield_blank:
     sta minefield_update_row
     ldy #$2B ; Load regular cursor
     jsr update_cursor_sprite
-    lda #%00011110  ; Enable rendering
-    sta PPUMASK
     lda PPUSTATUS
     lda #$00
     sta PPUADDR
     ldx #$4E
     stx PPUSCROLL
     ldx #$07
-    inc $8000, x
     sta PPUSCROLL
     lda #$20
     sta PPUADDR
-    nop
+    lda #%00011110  ; Enable rendering
+    sta PPUMASK
+    lda game_state
+    cmp #GAME_WON
+    bne :+
+    lda #$00
+    sta mines_digits_buffer
+    sta mines_digits_buffer + 1
+    sta mines_digits_buffer + 2
+    :
     rts
 
 update_minefield:   ; Current row in X
@@ -1385,10 +1391,6 @@ update_minefield:   ; Current row in X
     sta mines_digits_buffer + 1
     sta mines_digits_buffer + 2
     :
-    lda screen_update_setting
-    beq begin_update_minefield
-    jmp update_minefield_blank
-    begin_update_minefield:
     lda minefield_update_row
     cmp #$01
     beq :+
@@ -1609,12 +1611,18 @@ update_vram:
     lda #$02 ; Push sprites to OAM
     sta OAMDMA
     lda minefield_update_row ; Check if we have to update the minefield
-    beq :+
+    beq :++
     tax
-    jsr update_minefield
     lda screen_update_setting
-    beq end_update_vram
+    beq :+
+    lda minefield_update_row
+    cmp #$02
+    bcs :++
+    jsr update_minefield_blank
     rts
+    :
+    jsr update_minefield
+    jmp end_update_vram
     :
     ldy tiles_to_update
     beq :+
@@ -2073,6 +2081,22 @@ update_first_row_attributes: ; Clobbers A and X
     and #%00110000
     ora #%10001010
     sta minefield_attributes + 7
+    lda screen_update_setting ; Update the other rows on the blank setting because it all has to be done at once
+    beq :+
+    lda game_state
+    lda #$02
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$04
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$06
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$08
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    :
     lda #$01 
     sta minefield_update_row ; We're ready to update the screen
     rts
@@ -2247,6 +2271,22 @@ update_first_row_attributes_game_over:
     and #%00110000
     ora #%10001010
     sta minefield_attributes + 7
+    lda screen_update_setting ; Update the other rows on the blank setting because it all has to be done at once
+    beq :+
+    lda game_state
+    lda #$02
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$04
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$06
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    lda #$08
+    sta minefield_update_row
+    jsr update_other_row_attributes
+    :
     lda #$01 
     sta minefield_update_row ; We're ready to update the screen
     rts
