@@ -65,6 +65,7 @@ MOUSE_SHIFT_DOWN = 3
     mouse_y: .res 1
     mouse_down_x: .res 1
     mouse_down_y: .res 1
+    mouse_down_address: .res 1
     game_state: .res 1  ; 0 = game not started
                         ; 1 = game in progress
                         ; 2 = game over
@@ -1709,7 +1710,8 @@ buffer_tiles: ; Clobbers $02 and A
     txa
 .endmacro
 
-open_tile: ; Clobbers $00, $01, $02, X, Y, and A
+open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
+            ; 1 in $03 if ready after this
     ldy #>minefield_row_0
     sty scratch + 1
     tsx 
@@ -1819,8 +1821,6 @@ open_tile: ; Clobbers $00, $01, $02, X, Y, and A
     tsx
     cpx tile_stack_begin
     bne @after_done_check
-    lda #$01
-    sta ready_to_push_tiles_to_stack
     lda opened_tiles
     cmp #(GRID_HEIGHT * GRID_WIDTH - NUM_MINES)
     bcc :+
@@ -2407,7 +2407,176 @@ update_mines_count: ; Clobbers A, X, and Y
     sta mines_digits_buffer
     rts
 
-handle_mouse: ; Clobbers A and Y
+.macro check_tile_mask i ; Tile in $00, x in $01, y in $02
+    lda scratch + 1 ; Check if mouse is in bounds
+    cmp #$10
+    bcc :+
+    cmp #$F0
+    bcs :+
+    lda scratch + 2
+    cmp #$47
+    bcc :+
+    cmp #$D7
+    bcs :+
+    ldy scratch
+    lda minefield_row_0, y
+    and #(OPENED_MASK | FLAG_MASK)
+    bne :+
+    lda scratch + 1
+    sta OAMBUFFER + 4 * (11 + i * 2) + 3 ; Set X position
+    ; clc
+    adc #$08
+    sta OAMBUFFER + 4 * (12 + i * 2) + 3 ; Set X position
+    lda scratch + 2
+    sta OAMBUFFER + 4 * (11 + i * 2) ; Set Y position
+    sta OAMBUFFER + 4 * (12 + i * 2) ; Set Y position
+    jmp :++
+    :
+    lda #$FF ; Hide it
+    sta OAMBUFFER + 4 * (11 + i * 2) ; Set Y position
+    sta OAMBUFFER + 4 * (12 + i * 2) ; Set Y position
+    :
+.endmacro
+
+handle_shift_tile_masks: ; Clobbers A
+    lda mouse_down_address
+    sec
+    sbc #$11
+    sta scratch
+    lda mouse_x
+    and #%11110000
+    sec
+    sbc #$10
+    sta scratch + 1
+    lda mouse_y
+    and #%11110000
+    sec
+    sbc #$09 ; Account for NES jank
+    sta scratch + 2
+    check_tile_mask 0
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 1
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 2
+    lda scratch
+    clc
+    adc #$0E
+    sta scratch
+    lda scratch + 1
+    sec
+    sbc #$20
+    sta scratch + 1
+    lda scratch + 2
+    clc
+    adc #$10
+    sta scratch + 2
+    check_tile_mask 3
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 4
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 5
+    lda scratch
+    clc
+    adc #$0E
+    sta scratch
+    lda scratch + 1
+    sec
+    sbc #$20
+    sta scratch + 1
+    lda scratch + 2
+    clc
+    adc #$10
+    sta scratch + 2
+    check_tile_mask 6
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 7
+    inc scratch
+    lda scratch + 1
+    clc
+    adc #$10
+    sta scratch + 1
+    check_tile_mask 8
+    lda scratch
+    clc
+    adc #$0E
+    sta scratch
+    lda scratch + 1
+    sec
+    sbc #$20
+    sta scratch + 1
+    lda scratch + 2
+    clc
+    adc #$10
+    sta scratch + 2
+    rts
+
+handle_tile_masks: ; Clobbers $00, $01, $02, A
+    lda mouse_down_y
+    cmp #$09
+    bcs @hide_all
+    lda mouse_down_x ; Check if mouse is in bounds
+    cmp #$0E
+    bcs @hide_all
+    lda mouse_state
+    cmp #MOUSE_DOWN
+    bcc @hide_all
+    cmp #MOUSE_SHIFT_DOWN
+    bne :+
+    jmp handle_shift_tile_masks
+    :
+    ldy mouse_down_address
+    lda minefield_row_0, y
+    and #OPENED_MASK
+    bne @hide_all
+    lda mouse_x
+    and #%11110000
+    sta OAMBUFFER + 4 * 19 + 3 ; Set X position
+    ; clc
+    adc #$08
+    sta OAMBUFFER + 4 * 20 + 3 ; Set X position
+    lda mouse_y
+    and #%11110000
+    clc
+    adc #$07 ; Account for NES jank
+    sta OAMBUFFER + 4 * 19 ; Set Y position
+    sta OAMBUFFER + 4 * 20 ; Set Y position
+    lda #$FF ; Hide almost all of them
+    .repeat 8, i
+    sta OAMBUFFER + (4 * (11 + i))
+    .endrepeat
+    .repeat 8, i
+    sta OAMBUFFER + (4 * (21 + i))
+    .endrepeat
+    rts
+    @hide_all:
+    lda #$FF ; Hide all of them
+    .repeat 18, i
+    sta OAMBUFFER + (4 * (11 + i))
+    .endrepeat
+    lda #$FF
+    rts
+
+handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     lda mouse_state
     cmp #MOUSE_DOWN
     bcs @after_reset_button_handle ; Skip doing reset button stuff if we already have the mouse down
@@ -2478,13 +2647,7 @@ handle_mouse: ; Clobbers A and Y
     cmp #$09
     bcs @after_flag_stuff
     ; clc ; Carry should be set
-    ; lda mouse_down_y ; Already loaded
-    asl
-    asl
-    asl
-    asl
-    ora mouse_down_x
-    tay
+    ldy mouse_down_address
     lda minefield_row_0, y
     and #OPENED_MASK
     beq :+
@@ -2513,21 +2676,195 @@ handle_mouse: ; Clobbers A and Y
     lda mouse_buttons_released
     and #MOUSE_LEFT_CLICK ; Check the if we released click
     beq :+
+    lda mouse_buttons
+    and #MOUSE_SHIFT
+    bne @open_shift_click
     lda mouse_down_x
     cmp #$0E
     bcs :+
     lda mouse_down_y
     cmp #$09
     bcs :+
-    ; clc ; Carry should be set
-    ; lda mouse_down_y ; Already loaded
-    asl
-    asl
-    asl
-    asl
-    ora mouse_down_x
+    lda mouse_down_address
+    jsr open_tile
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    rts
+    :
+    jmp @end_method
+    @open_shift_click:
+    ldy mouse_down_address
+    lda minefield_row_0, y
+    and #%00001111 ; Check if this actually has a number
+    beq :-
+    sta scratch + 3
+    lda #$00
+    sta scratch + 4
+    tya
+    sec
+    sbc #$11
+    tay
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    tya
+    clc
+    adc #$0E
+    tay
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    tya
+    clc
+    adc #$0E
+    tay
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    iny
+    lda minefield_row_0, y
+    and #FLAG_MASK
+    beq :+
+    inc scratch + 4
+    :
+    lda scratch + 4
+    cmp scratch + 3
+    beq :+
+    rts
+    :
+    lda mouse_down_address
+    sec
+    sbc #$11
+    sta scratch + 4
+    ; lda scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
     jsr open_tile
     :
+    inc scratch + 4
+    lda scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    inc scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    lda scratch + 4
+    clc
+    adc #$0E
+    sta scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    inc scratch + 4
+    lda scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    inc scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    lda scratch + 4
+    clc
+    adc #$0E
+    sta scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    inc scratch + 4
+    lda scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    :
+    inc scratch + 4
+    cmp #$90
+    bcs :+
+    and #%00001111
+    cmp #$0E
+    bcs :+
+    lda scratch + 4
+    jsr open_tile
+    lda #$01
+    sta ready_to_push_tiles_to_stack
+    :
+    @end_method:
     rts
 
 nmi:
@@ -2600,6 +2937,13 @@ nmi:
     sec
     sbc #(GRID_Y / 2)
     sta mouse_down_y
+    ; lda mouse_down_y ; Already loaded
+    asl
+    asl
+    asl
+    asl
+    ora mouse_down_x
+    sta mouse_down_address
     ldx #$00
     jsr read_controllers
     jsr update_mouse_position
@@ -2625,6 +2969,7 @@ nmi:
     lda minefield_update_row
     bne :+
     jsr handle_mouse ; Don't handle mouse if we have to update the screen
+    jsr handle_tile_masks
     :
 
     lda minefield_update_row
