@@ -475,12 +475,34 @@ check_snes_mouse:
     sta JOY1
 
     read_loop_1:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2 ; Mouse should be connected to port 2
     lsr
     rol scratch
-    nop ; Need at least 14 cycles between reads for Hyper Click mice
-    nop
     bcc read_loop_1
+
+.macro print_controller_read
+    ldy #$08
+    lda scratch
+    sta scratch + 1
+    clc
+    :
+    ldx #$06
+    asl scratch + 1
+    bcc :+
+    dex
+    :
+    stx PPUDATA
+    dey
+    bne :--
+    lda PPUDATA
+.endmacro
+    ;lda #$21
+    ;sta PPUADDR
+    ;lda #$22
+    ;sta PPUADDR
+    ;print_controller_read
 
     lda scratch
     beq :+ 
@@ -491,17 +513,21 @@ check_snes_mouse:
     sta scratch
     
     read_loop_2:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2 
     lsr
     rol scratch
-    nop
-    nop
     bcc read_loop_2
 
+    ;print_controller_read
+
     lda scratch
-    and #%00001111
-    cmp #%00000001 ; Check signature to see if it's a mouse
-    beq :+
+    bne :+ ; Check signature to see if it's a mouse
+    jmp after_check_mouse
+    :
+    cmp #%11111111 
+    bne :+
     jmp after_check_mouse
     :
 
@@ -510,6 +536,8 @@ check_snes_mouse:
 
     sta scratch
     read_loop_3: ; The other reads aren't really needed, just doing them to be safe
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2 
     lsr
     rol scratch
@@ -519,6 +547,8 @@ check_snes_mouse:
     sta scratch
 
     read_loop_4:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2 
     lsr
     rol scratch
@@ -530,7 +560,6 @@ after_check_mouse:
     sta PPUCTRL
 
     jsr init_minefield
-
     sed ; Decimal flag used to see if frame finished
 forever:
     jmp forever
@@ -1163,11 +1192,11 @@ read_controllers:   ; Clobbers $0A, A, and Y
     lda #$01
     sta scratch + $A
     mouse_read_loop_1: ; First read shouldn't matter because it should be all 0s
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2
     lsr
     rol scratch + $A
-    nop ; Need at least 14 cycles between reads for Hyper Click mice
-    nop
     bcc mouse_read_loop_1
 
     lda scratch + $A
@@ -1178,11 +1207,11 @@ read_controllers:   ; Clobbers $0A, A, and Y
     lda #$01
     sta scratch + $A
     mouse_read_loop_2:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2
     lsr
     rol scratch + $A
-    nop
-    nop
     bcc mouse_read_loop_2
 
     lda scratch + $A
@@ -1222,11 +1251,11 @@ read_controllers:   ; Clobbers $0A, A, and Y
     lda #$01
     sta scratch + $A
     mouse_read_loop_3:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2
     lsr
     rol scratch + $A
-    nop
-    nop
     bcc mouse_read_loop_3
 
     lda scratch + $A ; Get Y displacement
@@ -1242,11 +1271,11 @@ read_controllers:   ; Clobbers $0A, A, and Y
     lda #$01
     sta scratch + $A
     mouse_read_loop_4:
+    nop ; Need at least 14 cycles between reads for Hyper Click mice
+    nop
     lda JOY2
     lsr
     rol scratch + $A
-    nop
-    nop
     bcc mouse_read_loop_4
 
     lda scratch + $A ; Get X displacement
@@ -2717,21 +2746,8 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     lda mouse_buttons
     and #MOUSE_LEFT_CLICK
     beq @mouse_not_clicked
-    lda snes_mouse_enabled
-    bne :+
-    lda mouse_down_x
-    cmp #$0E
-    bcs :+
-    lda mouse_down_y
-    cmp #$09
-    bcs :+
-    ldy mouse_down_address
-    lda minefield_row_0, y
-    and #OPENED_MASK
-    bne @enable_shift_down
-    :
     lda mouse_buttons
-    and #MOUSE_SHIFT
+    and #(MOUSE_SHIFT | MOUSE_RIGHT_CLICK)
     beq @disable_shift_down
     @enable_shift_down:
     lda #MOUSE_SHIFT_DOWN
@@ -2740,14 +2756,10 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     @disable_shift_down:
     lda #MOUSE_DOWN
     sta mouse_state
-    rts
+    jmp @check_release_right_click
     @mouse_not_clicked:
-    lda mouse_buttons
-    and #MOUSE_LEFT_CLICK
-    bne :+
     lda #MOUSE_UP
     sta mouse_state
-    :
     lda mouse_buttons_pressed
     and #MOUSE_RIGHT_CLICK ; Check to set flag
     beq @after_flag_stuff
@@ -2786,23 +2798,23 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     @after_flag_stuff:
     lda mouse_buttons_released
     and #MOUSE_LEFT_CLICK ; Check the if we released click
-    beq :++
+    beq @check_release_right_click
     lda mouse_buttons
     and #MOUSE_SHIFT
     bne @open_shift_click
-    lda snes_mouse_enabled
-    bne :+
-    lda mouse_down_x
-    cmp #$0E
-    bcs :+
-    lda mouse_down_y
-    cmp #$09
-    bcs :+
-    ldy mouse_down_address
-    lda minefield_row_0, y
-    and #OPENED_MASK
+    lda mouse_buttons_prev
+    and #MOUSE_RIGHT_CLICK
     bne @open_shift_click
-    :
+    jmp @open_regular_click
+    @check_release_right_click:
+    lda mouse_buttons_released
+    and #MOUSE_RIGHT_CLICK ; Check the if we released right click
+    beq :+
+    lda mouse_buttons_prev
+    and #MOUSE_LEFT_CLICK
+    bne @open_shift_click
+    jmp @end_method
+    @open_regular_click:
     lda mouse_down_x
     cmp #$0E
     bcs :+
