@@ -70,6 +70,7 @@ MOUSE_SHIFT_DOWN = 3
                         ; 1 = game in progress
                         ; 2 = game over
                         ; 3 = game won
+    minefield_initialized: .res 1
     opened_tiles: .res 1
     num_flags_left: .res 1
     seconds_elapsed: .res 2
@@ -2383,6 +2384,8 @@ handle_reset_button:
     lda mouse_buttons_released
     and #MOUSE_LEFT_CLICK
     beq :+
+    lda #$01
+    sta minefield_initialized
     jsr init_minefield
     lda #GAME_NOT_STARTED
     sta game_state
@@ -2656,11 +2659,19 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     bcc :+
     rts
     :
-    cmp #GAME_NOT_STARTED
+    lda minefield_initialized
     bne :+
     lda mouse_buttons_pressed
-    and #MOUSE_LEFT_CLICK
+    and #(MOUSE_LEFT_CLICK | MOUSE_RIGHT_CLICK)
     beq :+
+    lda mouse_down_x
+    cmp #$0E
+    bcs :+
+    lda mouse_down_y
+    cmp #$09
+    bcs :+
+    lda #$01
+    sta minefield_initialized
     jsr init_minefield ; Init minefield when game hasn't started and you click
     :
     lda mouse_buttons
@@ -3003,15 +3014,7 @@ nmi:
     jsr read_controllers
     jsr update_mouse_position
     lda game_state ; Check current game state
-    bne :++ ; Shuffle the mines on every frame the game hasn't started
-    lda controller_input ; If the game isn't started yet, start the game when start is pressed
-    and #BUTTON_START
-    beq :+
-    lda #GAME_IN_PROGRESS
-    sta game_state
-    jsr init_minefield
-    jmp :+++
-    :
+    bne :+ ; Shuffle the mines on every frame the game hasn't started
     jsr shuffle_mines
     jmp :++
     :
