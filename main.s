@@ -1728,8 +1728,9 @@ push_grid_tiles_to_stack: ; Clobbers $00, $01, A, X, and Y
     sta minefield_update_current_attribute
     rts
 
-buffer_tiles: ; Clobbers $02 and A
+buffer_tiles: ; Clobbers $00, $02, X, and A
     sta scratch + 2
+    stx scratch
     lda num_tiles_buffered
     cmp #TILE_UPDATE_BUFFER_SIZE 
     bcc :++
@@ -1738,41 +1739,33 @@ buffer_tiles: ; Clobbers $02 and A
     :
     rts
     :
-    tay
+    tax
     lda scratch + 2
-    sta tile_update_buffer, y
+    sta tile_update_buffer, x
     inc num_tiles_buffered
-    ldy #$00
+    ldx scratch
     rts
 
 .macro push_if_openable
+    lda minefield_row_0, y
     sta scratch
-    tax
-    lda (scratch), y
-    tay
     and #(FLAG_MASK | OPENED_MASK)
     bne :+
-    tya
-    ldy #$00
+    lda scratch
     ora #OPENED_MASK
-    sta (scratch), y
-    txa
+    sta minefield_row_0, y
+    tya
     pha
     :
-    ldy #$00
-    txa
 .endmacro
 
 open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
             ; 1 in $03 if ready after this
-    ldy #>minefield_row_0
-    sty scratch + 1
     tsx 
     stx tile_stack_begin
-    ldy #$00
-    sta scratch
+    tay
     tax
-    lda (scratch), y
+    lda minefield_row_0, y
     and #(FLAG_MASK | OPENED_MASK) ; Check if the one we opened is a flag or open
     beq :+
     rts
@@ -1781,14 +1774,13 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     bne :+
     lda #GAME_IN_PROGRESS ; Start game if it's not started yet
     sta game_state
-    lda (scratch), y
+    lda minefield_row_0, y
     and #MINE_MASK ; Check if the one we opened is a mine
     bne :++
     :
     jmp @after_reshuffle_loop
     :
     txa
-    tay
     @reshuffle_loop:
     jsr rand ; Reshuffle it if is a mine
     lda rng_seed
@@ -1832,7 +1824,7 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     inx
     inc minefield_row_0, x
 
-    lda scratch ; Remove mine from the place we clicked on
+    tya ; Remove mine from the place we clicked on
     sec
     sbc #$11
     tax
@@ -1863,11 +1855,10 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     dec minefield_row_0, x
     tya
     tax
-    ldy #$00
     @after_reshuffle_loop:
-    lda (scratch), y
+    lda minefield_row_0, y
     ora #OPENED_MASK
-    sta (scratch), y
+    sta minefield_row_0, y
     txa
     jmp @after_pull
     @begin:
@@ -1879,44 +1870,38 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     bcc :++
     lda #GAME_WON
     sta game_state
-    ldy #$00
+    ldx #$00
     @loop_begin: ; Mark all mines with flags 
-    lda minefield_row_0, y 
+    lda minefield_row_0, x 
     and #MINE_MASK
     beq :+
-    lda minefield_row_0, y 
+    lda minefield_row_0, x
     ora #FLAG_MASK
-    sta minefield_row_0, y
+    sta minefield_row_0, x
     :
-    iny
-    cpy #$8E
+    inx
+    cpx #$8E
     bcc @loop_begin
     :
     rts
     @after_done_check:
     pla
     @after_pull:
-    tax
+    tay
     cmp #$90
     bcs @begin
     and #%00001111
     cmp #$0E
     bcs @begin
     inc opened_tiles
-    stx scratch
-    lda (scratch), y
+    lda minefield_row_0, y
     tax
     and #MINE_MASK
     beq :+
     lda #GAME_OVER
     sta game_state
-    txa
-    ora #CLICKED_MINE_MASK
-    jmp :++
     :
-    txa
-    :
-    lda scratch
+    tya
     jsr buffer_tiles
     txa
     and #MINE_MASK
@@ -1926,30 +1911,31 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     txa
     and #DIGIT_MASK
     bne @begin
-    lda scratch
+    tya
     sec
     sbc #$11
+    tay
     push_if_openable
-    clc
-    adc #$01
+    iny
     push_if_openable
-    clc
-    adc #$01
+    iny
     push_if_openable
-    clc
-    adc #$0E
-    push_if_openable
-    clc
-    adc #$02
-    push_if_openable
+    tya
     clc
     adc #$0E
+    tay
     push_if_openable
-    clc
-    adc #$01
+    iny
+    iny
     push_if_openable
+    tya
     clc
-    adc #$01
+    adc #$0E
+    tay
+    push_if_openable
+    iny
+    push_if_openable
+    iny
     push_if_openable
     jmp @begin
 
@@ -2730,7 +2716,8 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     :
     lda minefield_initialized
     bne :+
-    lda mouse_buttons_pressed
+    lda mouse_buttons
+    ora mouse_buttons_prev
     and #(MOUSE_LEFT_CLICK | MOUSE_RIGHT_CLICK)
     beq :+
     lda mouse_down_x
