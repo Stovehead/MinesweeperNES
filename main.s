@@ -1865,6 +1865,11 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     tsx
     cpx tile_stack_begin
     bne @after_done_check
+    lda game_state
+    cmp #GAME_OVER
+    bne :+
+    rts
+    :
     lda opened_tiles
     cmp #(GRID_HEIGHT * GRID_WIDTH - NUM_MINES)
     bcc :++
