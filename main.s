@@ -657,7 +657,7 @@ shuffle_mines: ; Clobbers $0A, A, X, and Y
     rts
 
 init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
-    ldx #$0E
+    ldx #$10
     lda #$00
     :
     dex
@@ -670,6 +670,9 @@ init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
     sta minefield_row_6, x
     sta minefield_row_7, x
     sta minefield_row_8, x
+    sta minefield_row_8 + 16, x
+    sta minefield_row_8 + 96, x
+    sta minefield_row_8 + 112, x
     bne :-
     ldy #$01
     sty mines_digits_buffer + 1
