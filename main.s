@@ -147,7 +147,7 @@ reset:
     txs         ; Set up stack
     inx         ; now X = 0
     stx PPUCTRL	; disable NMI
-    stx PPUCTRL ; disable rendering
+    stx PPUMASK ; disable rendering
     stx APUDMC  ; disable DMC IRQs
     ; The vblank flag is in an unknown state after reset,
     ; so it is cleared here to make sure that @vblankwait1
@@ -2716,7 +2716,13 @@ handle_mouse: ; Clobbers $00, $01, $02, $03, $04, A, and Y
     :
     lda game_state
     cmp #GAME_OVER ; Don't open tiles if game over or won
-    bcc :+
+    bcc :++
+    lda mouse_state ; Bug fix
+    cmp #MOUSE_DOWN_ON_BUTTON
+    beq :+
+    lda #MOUSE_UP
+    sta mouse_state
+    :
     rts
     :
     lda minefield_initialized
