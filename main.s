@@ -683,6 +683,7 @@ init_minefield: ; Clobbers $00, $01, $02, X, Y, and A
     ldy #$00
     sty opened_tiles
     sty seconds_elapsed
+    sty seconds_elapsed + 1
     sty time_accumulator
     sty time_accumulator + 1
     sty time_accumulator + 2
@@ -1787,7 +1788,7 @@ open_tile:  ; Clobbers $00, $01, $02, X, Y, and A
     @reshuffle_loop:
     jsr rand ; Reshuffle it if is a mine
     lda rng_seed
-    and #%00001111
+    and #%00001111; possibly breaks if NMI happens right here
     cmp #$0E ; Try again if the one we got is out of bounds
     bcs @reshuffle_loop
     lda rng_seed
